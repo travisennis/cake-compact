@@ -58,8 +58,11 @@ a cap.
 Tests cover the 493-item single-request regression, exact request and
 constraint projection below the 80k target, parallel and split batches, the
 synthetic-summary case, repeated checkpoints, and a real-Cake in-place round
-trip. The live recall probe is `docs/single-request-recall-probe.md`; it needs
-separate spend authorization.
+trip. The synthetic live recall probe ran on 2026-10-27 as task 003 and returned
+**PARTIAL**: the exact request and all constraints survived, but the summary
+carried its own temp cwd/environment and the probe repeated it. Follow-up task
+004 owns that defect; the real-regression full critical-fact probe was not run.
+Procedure and result: `docs/single-request-recall-probe.md`.
 
 ## Stage timing (done)
 

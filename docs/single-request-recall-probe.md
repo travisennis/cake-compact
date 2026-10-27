@@ -2,12 +2,23 @@
 
 This probe is the live quality check for cake-compact task 002 (bounded
 recent-tail selection with an exact request pin). It is **not** part of
-`just ci`, and it is not authorized by the task: it costs summarizer and probe
-model calls. Run it only after Trav explicitly authorizes the spend.
+`just ci`. Run it only after Trav explicitly authorizes the spend; it costs
+summarizer and probe model calls.
 
 The offline suite proves structure, ordering, reduction, and that real Cake
 accepts and projects the checkpoint. It cannot prove that the summary carries
 the facts the assistant needs to continue. This probe measures that.
+
+## Result (2026-10-27)
+
+Task 003 ran the synthetic fixture once with the default model:
+checkpoint `270,233 -> 10,628`; summary `83,936 in / 605 out`; probe
+`3,694 in / 3,707 out`. The probe quoted the exact request and every stated
+constraint and did not invent work or live verification. It is **PARTIAL**
+because the summary carried the summarizer's own temporary working directory
+and environment as session facts; the probe repeated the false working
+directory. Follow-up task 004 owns that defect. The real-regression full
+critical-fact probe was not run.
 
 ## Fixtures
 
@@ -78,8 +89,10 @@ The checkpointed context must preserve all of these without tools:
 - Decisions: pin the owning user request as `user_input`; summarize older work
   inside the same request; move the tail to complete provider boundaries.
 - Verification: offline structural tests and the real-Cake in-place round trip
-  passed; live recall evidence is not yet authorized or collected.
-- Unresolved work: the live recall/continuation comparison itself.
+  passed; the synthetic live probe ran on 2026-10-27 as PARTIAL. The
+  real-regression full critical-fact comparison is still not collected.
+- Unresolved work: the real-regression full critical-fact comparison and the
+  summary runtime-metadata cleanup (cake-compact 004).
 
 ## Scoring
 

@@ -400,8 +400,12 @@ is reported as success; otherwise the source file is left byte-stable.
   commit, and fork verification fields, while no-op and failure paths do not
   invent stages. The reproducible local baseline is
   [`docs/compaction-stage-baseline.md`](docs/compaction-stage-baseline.md).
-- Offline structural checks are not live quality evidence. The no-tool recall
-  and continuation probe that needs separate spend authorization is in
+- Offline structural checks are not live quality evidence. The synthetic
+  single-request live probe ran on 2026-10-27 as task 003 and returned
+  **PARTIAL**: the exact request and all constraints survived, but the summary
+  carried the summarizer's own temporary working directory/environment and the
+  probe repeated it (follow-up task 004). The real-regression full
+  critical-fact probe was not run. Procedure and result:
   [`docs/single-request-recall-probe.md`](docs/single-request-recall-probe.md).
 - Manual end-to-end check against a local mock provider: three `run` turns, a
   compaction after the second, and a third provider request containing the
