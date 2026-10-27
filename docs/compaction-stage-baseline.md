@@ -6,12 +6,12 @@ temporary copy under a temporary Cake data root.
 
 ## Purpose
 
-The live `f8d30612-55ca-47f4-820a-b890f457583d` session ended its task at
-`2026-10-26T14:43:31.345Z` (last `turn_usage`) and appended a checkpoint at
-`2026-10-26T14:44:03.068Z`: a 31.7-second observed gap. That gap was not a
-measured provider duration. This baseline separates the local wrapper and Cake
-append stages from the summary stage so the next latency decision is based on
-evidence.
+The live `f8d30612-55ca-47f4-820a-b890f457583d` session completed its task at
+approximately `2026-10-26T14:43:31.36Z` (the last `turn_usage` is
+`14:43:31.345Z`) and appended a checkpoint at `2026-10-26T14:44:03.068Z`: a
+31.7-second observed gap. That gap was not a measured provider duration. This
+baseline separates the local wrapper and Cake append stages from the summary
+stage so the next latency decision is based on evidence.
 
 ## Instrumentation
 
