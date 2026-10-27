@@ -49,8 +49,16 @@ func TestBuildTranscriptRejectsContentAboveTheCap(t *testing.T) {
 
 func TestBuildSystemPromptIncludesExtraInstructions(t *testing.T) {
 	prompt := BuildSystemPrompt("focus on the failing command")
-	if !strings.Contains(prompt, "context-compaction summarizer") || !strings.Contains(prompt, "focus on the failing command") {
-		t.Fatalf("unexpected prompt: %s", prompt)
+	for _, want := range []string{
+		"context-compaction summarizer",
+		"focus on the failing command",
+		"Runtime boundary:",
+		"not session content",
+		"Never copy it",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt is missing %q: %s", want, prompt)
+		}
 	}
 }
 

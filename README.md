@@ -67,8 +67,11 @@ keep a checkpoint-aware binary for compacted sessions.
 6. It summarizes the retired prefix. The default summarizer is a Cake
    invocation with `--no-session --no-tools --no-skills`, run in a temporary
    directory with a temporary data root; its provider usage and wall time are
-   reported in the result document for cost measurement. `-summary-file` and
-   `-summarizer-command` replace the model call and report no usage.
+   reported in the result document for cost measurement. The prompt tells the
+   summarizer that Cake's process environment is not session content, and the
+   returned summary is scrubbed of lines that only restate that environment.
+   `-summary-file` and `-summarizer-command` replace the model call and report
+   no usage.
 7. **In place (default):** it pipes one JSON payload to
    `cake sessions checkpoint <UUID> --json` on stdin. Cake owns the envelope,
    checkpoint id, session id, timestamp, boundary, exclusive append lock,
@@ -118,6 +121,28 @@ an estimate (4 characters per token, a 25% safety margin, and 1,000 tokens per
 inline image), and the 80k quality target used in qualification is a policy
 choice, not the model window maximum. Do not treat either number as a
 provider-measured bound.
+
+### Summarizer runtime boundary
+
+Cake appends a separate Developer message containing the child process's
+working directory, date, platform, architecture, shell, and terminal. That
+happens in `build_initial_prompt_messages_with_enabled_tools` in Cake's
+`src/prompts/mod.rs`; `--system-prompt` replaces only the system message, so
+`--no-session --no-tools --no-skills` does not suppress it.
+
+cake-compact contains that boundary in two layers:
+
+- `BuildSystemPrompt` declares the runtime message out of scope and tells the
+  summarizer not to assert facts absent from the transcript.
+- The default summarizer's returned text is scanned before it reaches a
+  checkpoint. A line is dropped when it contains the per-call summary temp path
+  or `cake-compact-summary-`, or when it begins with a runtime label and asserts
+  a runtime fact that the retired transcript does not contain.
+
+`summary_instruction_version` is now 2. This is containment, not a proof: a
+future Cake flag that omits the runtime Developer message for non-agent calls
+would remove the injection at its source. The fix uses no model call and does
+not change the default model or profile.
 
 `inspect -json` reports `anchor_item` and `pinned_request`, so the request that
 would be preserved (or the absence of one) is visible before a compaction.
@@ -389,6 +414,12 @@ is reported as success; otherwise the source file is left byte-stable.
   detection with no fallback, the subprocess payload shape, summarizer
   cancellation, and recognition of an append that completed before an
   interrupt.
+- Summarizer runtime boundaries are covered offline: the prompt quarantines
+  Cake's process-environment Developer message; a fake child proves the
+  per-call `$PWD` is dropped; transcript-backed environment facts and prose
+  that merely mentions runtime terms are kept; and a summary made only of
+  runtime metadata is rejected. The task 003 contamination text is a
+  regression case. No model call is involved.
 - `CAKE_BIN=/path/to/cake just test-cake`: the generated checkpoint is accepted
   by real Cake; replay shows the raw transcript plus exactly one checkpoint
   (two after a second append), the source session id is unchanged, a pinned
@@ -404,7 +435,8 @@ is reported as success; otherwise the source file is left byte-stable.
   single-request live probe ran on 2026-10-27 as task 003 and returned
   **PARTIAL**: the exact request and all constraints survived, but the summary
   carried the summarizer's own temporary working directory/environment and the
-  probe repeated it (follow-up task 004). The real-regression full
+  probe repeated it. Task 004 fixed that leak with a prompt boundary and a
+  summary scrub; no live re-probe was run. The real-regression full
   critical-fact probe was not run. Procedure and result:
   [`docs/single-request-recall-probe.md`](docs/single-request-recall-probe.md).
 - Manual end-to-end check against a local mock provider: three `run` turns, a

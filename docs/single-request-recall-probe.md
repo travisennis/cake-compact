@@ -20,6 +20,13 @@ and environment as session facts; the probe repeated the false working
 directory. Follow-up task 004 owns that defect. The real-regression full
 critical-fact probe was not run.
 
+Task 004 fixed the defect on 2026-10-27 without a model call: the summary prompt
+now declares Cake's runtime Developer message out of scope, and the returned
+summary drops lines that only restate the per-call temp path or an environment
+fact absent from the retired transcript. `summary_instruction_version` is 2.
+No live re-probe was run; the synthetic probe result above remains the only
+live recall evidence.
+
 ## Fixtures
 
 Use one of these, never both in one run:
@@ -91,8 +98,9 @@ The checkpointed context must preserve all of these without tools:
 - Verification: offline structural tests and the real-Cake in-place round trip
   passed; the synthetic live probe ran on 2026-10-27 as PARTIAL. The
   real-regression full critical-fact comparison is still not collected.
-- Unresolved work: the real-regression full critical-fact comparison and the
-  summary runtime-metadata cleanup (cake-compact 004).
+- Unresolved work: the real-regression full critical-fact comparison. The
+  summary runtime-metadata cleanup is fixed by cake-compact 004; no live
+  re-probe was run.
 
 ## Scoring
 
