@@ -75,11 +75,18 @@ func (options Options) withDefaults() Options {
 
 // Plan is the selected retirement boundary and the items on each side of it.
 type Plan struct {
-	File            *session.File
-	Projected       []session.Item
-	Prefix          []session.Item
-	Retained        []session.Item
-	Start           int
+	File      *session.File
+	Projected []session.Item
+	Prefix    []session.Item
+	Retained  []session.Item
+	// Start is the index in Projected of the first retained tail item. The
+	// owning user request is prepended to Retained and pinned when it sits
+	// before Start.
+	Start int
+	// Anchor is the index in Projected of the real user request that owns the
+	// retained tail, or -1 when no real user message exists at or before Start.
+	// The synthetic historical summary is never an anchor.
+	Anchor          int
 	BeforeTokens    uint64
 	Window          uint64
 	Basis           string
@@ -162,7 +169,7 @@ func Analyze(file *session.File, options Options) (*Plan, Decision, error) {
 		}
 	}
 
-	start, selectErr := selectStart(projected, keep)
+	selection, selectErr := selectTail(projected, keep)
 	if selectErr != nil {
 		if needed {
 			return plan, Decision{Compact: false, Reason: selectErr.Error()}, nil
@@ -170,9 +177,12 @@ func Analyze(file *session.File, options Options) (*Plan, Decision, error) {
 		return plan, Decision{Compact: false, Reason: reason + "; " + selectErr.Error()}, nil
 	}
 
-	plan.Start = start
-	plan.Prefix = projected[:start]
-	plan.Retained = projected[start:]
+	plan.Start = selection.Start
+	plan.Anchor = selection.Anchor
+	plan.Prefix, plan.Retained, err = planSides(projected, selection)
+	if err != nil {
+		return nil, Decision{}, err
+	}
 	plan.RetainedTokens = session.EstimateTokens(plan.Retained)
 
 	if len(plan.Prefix) == 0 {
@@ -256,12 +266,24 @@ func contextEstimate(file *session.File, options Options) (before, window uint64
 	return before, window, basis
 }
 
-// selectStart chooses a suffix of at least keepTokens ending at the tail and
-// starting at a real user message. A suffix that splits a call/output pair is
-// moved back to the previous user message until the pairing is complete.
-func selectStart(items []session.Item, keepTokens uint64) (int, error) {
+// tailSelection is a bounded retained suffix plus the request that owns it.
+type tailSelection struct {
+	Start  int
+	Anchor int
+}
+
+// selectTail chooses a suffix of at least keepTokens and then moves its start
+// back to a complete provider boundary: no call/output pair may straddle the
+// boundary, and a reasoning/call batch may not be cut. The owning real user
+// message is reported separately so the caller can pin it exactly instead of
+// forcing the whole exchange into the retained tail. A synthetic historical
+// summary is never an anchor: it carries no user instruction to preserve.
+//
+// keepTokens is a target, not a ceiling. An indivisible item or the pinned
+// request can push the retained estimate above it.
+func selectTail(items []session.Item, keepTokens uint64) (tailSelection, error) {
 	if len(items) == 0 {
-		return 0, fmt.Errorf("session has no conversation items")
+		return tailSelection{}, fmt.Errorf("session has no conversation items")
 	}
 	if keepTokens == 0 {
 		keepTokens = 1
@@ -277,30 +299,94 @@ func selectStart(items []session.Item, keepTokens uint64) (int, error) {
 		}
 	}
 
-	for start >= 0 && !items[start].IsUserMessage() {
+	for start > 0 && validateRetained(items[start:]) != nil {
 		start--
 	}
-	if start < 0 {
-		return 0, fmt.Errorf("no user message boundary before the retained tail")
+	if err := validateRetained(items[start:]); err != nil {
+		return tailSelection{}, fmt.Errorf("cannot retain a complete provider tail: %w", err)
 	}
 
-	for {
-		if err := validateRetained(items[start:]); err == nil {
-			return start, nil
-		} else {
-			previous := -1
-			for i := start - 1; i >= 0; i-- {
-				if items[i].IsUserMessage() {
-					previous = i
-					break
-				}
-			}
-			if previous < 0 {
-				return 0, fmt.Errorf("cannot retain a complete exchange: %w", err)
-			}
-			start = previous
+	// Keep a reasoning/call batch whole. If the budget lands on a call or in
+	// the middle of a contiguous reasoning run, move to the batch's first item.
+batch:
+	for start > 0 {
+		switch {
+		case items[start].Call != nil && items[start-1].Reasoning != nil:
+			start--
+		case items[start].Reasoning != nil && items[start-1].Reasoning != nil:
+			start--
+		default:
+			break batch
 		}
 	}
+
+	anchor := -1
+	for i := start; i >= 0; i-- {
+		if items[i].IsUserMessage() {
+			anchor = i
+			break
+		}
+	}
+	return tailSelection{Start: start, Anchor: anchor}, nil
+}
+
+// planSides splits the projected context into the retired prefix and the
+// retained tail. The owning user request between them is copied into the tail
+// with a user_input pin, so the request stays exact while the work after it is
+// summarized. The prefix keeps source order without duplicating that request.
+func planSides(projected []session.Item, selection tailSelection) (prefix, retained []session.Item, err error) {
+	start := selection.Start
+	switch {
+	case selection.Anchor == start:
+		pinned, err := pinUserRequest(projected[start])
+		if err != nil {
+			return nil, nil, err
+		}
+		retained = make([]session.Item, 0, len(projected)-start)
+		retained = append(retained, pinned)
+		retained = append(retained, projected[start+1:]...)
+		prefix = projected[:start]
+	case selection.Anchor >= 0:
+		pinned, err := pinUserRequest(projected[selection.Anchor])
+		if err != nil {
+			return nil, nil, err
+		}
+		prefix = make([]session.Item, 0, start-1)
+		prefix = append(prefix, projected[:selection.Anchor]...)
+		prefix = append(prefix, projected[selection.Anchor+1:start]...)
+		retained = make([]session.Item, 0, len(projected)-start+1)
+		retained = append(retained, pinned)
+		retained = append(retained, projected[start:]...)
+	default:
+		prefix = projected[:start]
+		retained = projected[start:]
+	}
+	return prefix, retained, nil
+}
+
+// pinUserRequest marks the retained copy of the owning user request. A pin is
+// checkpoint-local metadata: Cake validates its placement and never emits it as
+// a provider item, so the request stays exact without becoming a new
+// instruction. Retaining the raw message also preserves images and ids.
+func pinUserRequest(item session.Item) (session.Item, error) {
+	if !item.IsUserMessage() {
+		return session.Item{}, fmt.Errorf("cannot pin a non-user item as the owning request")
+	}
+	if len(item.Raw) == 0 {
+		return session.Item{}, fmt.Errorf("user request has no raw payload")
+	}
+
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(item.Raw, &object); err != nil {
+		return session.Item{}, fmt.Errorf("decode user request for pinning: %w", err)
+	}
+	object["pin"] = json.RawMessage(`{"kind":"user_input"}`)
+	raw, err := json.Marshal(object)
+	if err != nil {
+		return session.Item{}, fmt.Errorf("encode pinned user request: %w", err)
+	}
+	item.Raw = raw
+	return item, nil
 }
 
 // validateRetained mirrors Cake's checkpoint pairing rule: parallel calls may

@@ -3,6 +3,7 @@ package compact
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,46 +79,77 @@ func outputItem(callID string) session.Item {
 	return session.Item{Type: session.TypeFunctionOutput, Output: &session.FunctionCallOutput{CallID: callID, Output: "result"}}
 }
 
-func TestSelectStartKeepsCompleteExchanges(t *testing.T) {
+func outputItemText(callID, text string) session.Item {
+	return session.Item{Type: session.TypeFunctionOutput, Output: &session.FunctionCallOutput{CallID: callID, Output: text}}
+}
+
+func TestSelectTailKeepsCompleteExchanges(t *testing.T) {
 	items := []session.Item{
 		messageItem("user", "first"),
 		messageItem("assistant", "one"),
 		messageItem("user", "second"),
 		messageItem("assistant", "two"),
 	}
-	start, err := selectStart(items, 1)
+	selection, err := selectTail(items, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if start != 2 {
-		t.Fatalf("start = %d, want 2 (second user message)", start)
+	if selection.Start != 3 || selection.Anchor != 2 {
+		t.Fatalf("selection = %+v, want tail 3 anchored at the second user message 2", selection)
 	}
 
 	parallel := []session.Item{
 		messageItem("user", "run both"),
 		callItem("call-1"),
 		callItem("call-2"),
-		outputItem("call-2"),
-		outputItem("call-1"),
+		outputItemText("call-2", strings.Repeat("x", 400)),
+		outputItemText("call-1", strings.Repeat("y", 400)),
 		messageItem("assistant", "both done"),
 	}
-	start, err = selectStart(parallel, 1)
+	selection, err = selectTail(parallel, 130)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if start != 0 {
-		t.Fatalf("parallel start = %d, want 0", start)
+	if selection.Start != 1 || selection.Anchor != 0 {
+		t.Fatalf("parallel selection = %+v, want the whole call batch at 1", selection)
+	}
+	if err := validateRetained(parallel[selection.Start:]); err != nil {
+		t.Fatalf("parallel tail is not complete: %v", err)
 	}
 }
 
-func TestSelectStartRejectsCrossBoundaryAndUnfinishedCalls(t *testing.T) {
+func TestSelectTailIncludesReasoningBeforeACall(t *testing.T) {
+	items := []session.Item{
+		messageItem("user", "request"),
+		{Type: session.TypeReasoning, Reasoning: &session.Reasoning{ID: "r-1"}},
+		callItem("call-1"),
+		outputItem("call-1"),
+		messageItem("assistant", "first batch done"),
+		{Type: session.TypeReasoning, Reasoning: &session.Reasoning{ID: "r-2"}},
+		callItem("call-2"),
+		outputItemText("call-2", strings.Repeat("z", 40)),
+	}
+	// The budget lands on call-2; the retained tail must start at its reasoning.
+	selection, err := selectTail(items, 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Start != 5 || selection.Anchor != 0 {
+		t.Fatalf("selection = %+v, want reasoning r-2 at 5 and the request at 0", selection)
+	}
+	if items[selection.Start].Reasoning == nil || items[selection.Start].Reasoning.ID != "r-2" {
+		t.Fatalf("tail starts at %+v, want reasoning r-2", items[selection.Start])
+	}
+}
+
+func TestSelectTailRejectsCrossBoundaryAndUnfinishedCalls(t *testing.T) {
 	crossing := []session.Item{
 		messageItem("user", "first"),
 		callItem("call-1"),
 		messageItem("user", "second"),
 		outputItem("call-1"),
 	}
-	if _, err := selectStart(crossing, 1); err == nil {
+	if _, err := selectTail(crossing, 1); err == nil {
 		t.Fatal("a call split by a user message must not be retained")
 	}
 
@@ -125,8 +157,63 @@ func TestSelectStartRejectsCrossBoundaryAndUnfinishedCalls(t *testing.T) {
 		messageItem("user", "first"),
 		callItem("call-1"),
 	}
-	if _, err := selectStart(unfinished, 1); err == nil {
+	if _, err := selectTail(unfinished, 1); err == nil {
 		t.Fatal("an unfinished call must not be retained")
+	}
+}
+
+func TestAnalyzeReportsAnUnusableBoundaryAndPreservesTheSession(t *testing.T) {
+	dataDir := t.TempDir()
+	dir := cakecli.SessionsDir(dataDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Join([]string{
+		`{"type":"session_meta","format_version":4,"session_id":"` + sourceID + `","timestamp":"2026-10-26T12:00:00Z","working_directory":"/tmp","model":"test-model"}`,
+		`{"type":"message","role":"user","content":"first"}`,
+		`{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read","arguments":"{}"}`,
+		`{"type":"message","role":"user","content":"second"}`,
+		`{"type":"function_call_output","call_id":"call-1","output":"contents"}`,
+	}, "\n") + "\n"
+	path := filepath.Join(dir, sourceID+".jsonl")
+	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := session.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, decision, err := Analyze(file, Options{Force: true, KeepTokens: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Compact {
+		t.Fatalf("a split call must not compact: %+v", plan)
+	}
+	if !strings.Contains(decision.Reason, "cannot retain a complete provider tail") {
+		t.Fatalf("reason does not name the unusable boundary: %s", decision.Reason)
+	}
+
+	compactor := &Compactor{
+		Mode:    ModeFork,
+		DataDir: dataDir,
+		Options: Options{Force: true, KeepTokens: 1, SummaryFile: writeSummary(t, "never used")},
+		Now:     time.Now,
+		NewID:   func() (string, error) { return newID, nil },
+	}
+	result, err := compactor.Compact(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Compacted {
+		t.Fatal("an unusable boundary must not commit a checkpoint")
+	}
+	if _, err := os.Stat(filepath.Join(dir, newID+".jsonl")); !os.IsNotExist(err) {
+		t.Fatal("a no-fit compaction wrote a session")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != lines {
+		t.Fatalf("the source session changed: %v", err)
 	}
 }
 
@@ -173,6 +260,231 @@ func TestAnalyzeBelowThresholdAndMissingWindow(t *testing.T) {
 	}
 	if decision.Compact || !strings.Contains(decision.Reason, "no context window") {
 		t.Fatalf("unexpected missing-window decision: %+v", decision)
+	}
+}
+
+const (
+	singleRequestText    = "Implement bounded recent-tail selection for this session. Constraints: preserve this request exactly, keep complete reasoning/call/output batches, do not change the model or profile, run just ci, never touch /etc, and report every failure with the exact command that failed."
+	singleRequestSummary = "Goal: implement bounded recent-tail selection. Decisions: pin the user request exactly with user_input, keep complete reasoning/call/output batches, and summarize older work inside the same request. Constraints: do not change the model or profile, run just ci, never touch /etc, and report every failure with its exact command. Verified: offline structural checks only; no live recall evidence is authorized. Unresolved: live recall/continuation comparison."
+)
+
+// singleRequestFixtureLines builds the regression shape: one user request and
+// many completed tool batches. Its measured input is the 270k session that
+// previously retained all 495 items, and its content estimate is large enough
+// that the 60k trigger is crossed without the measurement.
+func singleRequestFixtureLines() string {
+	filler := strings.Repeat("verified detail ", 110)
+	var builder strings.Builder
+	write := func(value any) {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			panic(err)
+		}
+		builder.Write(encoded)
+		builder.WriteByte('\n')
+	}
+
+	write(map[string]any{
+		"type": "session_meta", "format_version": 4, "session_id": sourceID,
+		"timestamp": "2026-10-26T12:00:00Z", "working_directory": "/tmp",
+		"tools": []string{"Bash", "Read"}, "model": "test-model", "model_config": "test",
+	})
+	write(map[string]any{
+		"type": "task_start", "session_id": sourceID, "task_id": taskID,
+		"timestamp": "2026-10-26T12:00:01Z", "model": "test-model", "model_config": "test",
+	})
+	write(map[string]any{"type": "message", "role": "user", "content": singleRequestText})
+	for batch := 0; batch < 123; batch++ {
+		write(map[string]any{
+			"type": "reasoning", "id": fmt.Sprintf("r-%d", batch),
+			"summary": []map[string]any{{"type": "summary_text", "text": filler}},
+		})
+		write(map[string]any{
+			"type": "function_call", "id": fmt.Sprintf("fc-%d", batch),
+			"call_id": fmt.Sprintf("call-%d", batch), "name": "Bash",
+			"arguments": fmt.Sprintf(`{"command":"go test ./... # batch %d"}`, batch),
+		})
+		write(map[string]any{
+			"type": "function_call_output", "call_id": fmt.Sprintf("call-%d", batch),
+			"output": filler,
+		})
+		write(map[string]any{
+			"type": "message", "role": "assistant",
+			"content": fmt.Sprintf("Batch %d complete: %s", batch, filler),
+		})
+	}
+	write(map[string]any{
+		"type": "turn_usage", "session_id": sourceID, "task_id": taskID, "turn": 1,
+		"usage": map[string]any{
+			"input_tokens": 270233, "input_tokens_details": map[string]any{"cached_tokens": 0},
+			"output_tokens": 800, "output_tokens_details": map[string]any{"reasoning_tokens": 0},
+			"total_tokens": 271033,
+		},
+		"timestamp": "2026-10-26T12:30:00Z", "usage_presence": "complete",
+		"context_window": 400000, "remaining_context_tokens": 129767,
+	})
+	return builder.String()
+}
+
+func loadSingleRequestFixture(t *testing.T) *session.File {
+	t.Helper()
+	file, err := session.LoadBytes("single-request.jsonl", []byte(singleRequestFixtureLines()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+func writeSingleRequestFixture(t *testing.T, dataDir string) string {
+	t.Helper()
+	dir := cakecli.SessionsDir(dataDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, sourceID+".jsonl")
+	if err := os.WriteFile(path, []byte(singleRequestFixtureLines()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestAnalyzeSingleRequestSelectsABoundedTail(t *testing.T) {
+	file := loadSingleRequestFixture(t)
+	plan, decision, err := Analyze(file, Options{ThresholdTokens: 60000, KeepTokens: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Compact {
+		t.Fatalf("expected compaction: %s", decision.Reason)
+	}
+	if plan.Anchor != 0 {
+		t.Fatalf("anchor = %d, want the single user request at 0", plan.Anchor)
+	}
+	if plan.Start <= 1 {
+		t.Fatalf("tail start = %d, want a bounded tail after the request", plan.Start)
+	}
+	if len(plan.Prefix) == 0 || len(plan.Retained) >= len(plan.Projected) {
+		t.Fatalf("prefix/retained = %d/%d, want a nonempty prefix", len(plan.Prefix), len(plan.Retained))
+	}
+	if plan.RetainedTokens < 8000 || plan.RetainedTokens >= 20000 {
+		t.Fatalf("retained estimate = %d, want a bounded tail near the 10000 target", plan.RetainedTokens)
+	}
+	if len(plan.Prefix) < 400 {
+		t.Fatalf("prefix items = %d, want most of the 493 items retired", len(plan.Prefix))
+	}
+	for _, item := range plan.Prefix {
+		if item.IsUserMessage() {
+			t.Fatal("the owning user request must not be summarized away")
+		}
+	}
+	if err := validateRetained(plan.Retained); err != nil {
+		t.Fatalf("retained plan is not a complete provider history: %v", err)
+	}
+
+	head := plan.Retained[0]
+	if !head.IsUserMessage() || head.Message.Content != singleRequestText {
+		t.Fatalf("retained head is not the exact request: %+v", head.Message)
+	}
+	var pinned struct {
+		Pin *struct {
+			Kind string `json:"kind"`
+		} `json:"pin"`
+	}
+	if err := json.Unmarshal(head.Raw, &pinned); err != nil {
+		t.Fatal(err)
+	}
+	if pinned.Pin == nil || pinned.Pin.Kind != "user_input" {
+		t.Fatalf("retained request is not pinned: %s", head.Raw)
+	}
+}
+
+func TestSingleRequestCheckpointProjectsThePinnedRequest(t *testing.T) {
+	dataDir := t.TempDir()
+	sourcePath := writeSingleRequestFixture(t, dataDir)
+	compactor := &Compactor{
+		Mode:    ModeFork,
+		DataDir: dataDir,
+		Options: Options{
+			ThresholdTokens: 60000,
+			KeepTokens:      10000,
+			SummaryFile:     writeSummary(t, singleRequestSummary),
+			Trigger:         "threshold",
+		},
+		Now:   time.Now,
+		NewID: func() (string, error) { return newID, nil },
+	}
+	result, err := compactor.Compact(context.Background(), sourcePath)
+	if err != nil || !result.Compacted {
+		t.Fatalf("compaction: %v %+v", err, result)
+	}
+
+	compacted, err := session.Load(filepath.Join(cakecli.SessionsDir(dataDir), newID+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, err := compacted.Projected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projected) < 2 || !projected[0].Synthetic {
+		t.Fatalf("projection does not start with the summary: %+v", projected)
+	}
+	if projected[1].Message == nil || projected[1].Message.Role != "user" || projected[1].Message.Content != singleRequestText {
+		t.Fatalf("projection does not preserve the exact request: %+v", projected[1].Message)
+	}
+	if err := validateRetained(projected[1:]); err != nil {
+		t.Fatalf("projected tail is not a complete provider history: %v", err)
+	}
+	if got := session.EstimateTokens(projected); got >= 80000 {
+		t.Fatalf("projected context estimate = %d, want below the 80000 quality target", got)
+	}
+	for _, fact := range []string{"bounded recent-tail selection", "do not change the model", "just ci", "never touch /etc"} {
+		if !strings.Contains(projected[0].Message.Content, fact) {
+			t.Fatalf("summary lost the critical fact %q: %s", fact, projected[0].Message.Content)
+		}
+	}
+	if !strings.Contains(projected[0].Message.Content, "no live recall evidence is authorized") {
+		t.Fatal("summary does not distinguish offline checks from live evidence")
+	}
+}
+
+func TestSelectTailDoesNotAnchorOnTheHistoricalSummary(t *testing.T) {
+	synthetic, err := session.SummaryItem(&session.Checkpoint{Summary: "old summary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []session.Item{
+		synthetic,
+		messageItem("assistant", "retained answer"),
+		{Type: session.TypeReasoning, Reasoning: &session.Reasoning{ID: "r-1"}},
+		callItem("call-1"),
+		outputItem("call-1"),
+	}
+	selection, err := selectTail(items, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Anchor != -1 {
+		t.Fatalf("anchor = %d, want none: a synthetic summary is not a user instruction", selection.Anchor)
+	}
+	if selection.Start != 2 {
+		t.Fatalf("start = %d, want the complete reasoning/call batch at 2", selection.Start)
+	}
+
+	prefix, retained, err := planSides(items, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prefix) != 2 || len(retained) != 3 {
+		t.Fatalf("prefix/retained = %d/%d, want 2/3", len(prefix), len(retained))
+	}
+	for _, item := range retained {
+		if item.Synthetic {
+			t.Fatal("the synthetic summary cannot be retained")
+		}
+		if strings.Contains(string(item.Raw), `"pin"`) {
+			t.Fatalf("no anchor means no invented pin: %s", item.Raw)
+		}
 	}
 }
 

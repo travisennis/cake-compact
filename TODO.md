@@ -42,6 +42,25 @@ or command summarizer reports no usage and omits the field; a provider response
 whose usage is missing or malformed leaves it zero rather than failing the
 summary.
 
+## Bounded single-request tail selection (done)
+
+Compaction no longer requires the retained tail to start at a user message.
+`selectTail` walks back from the newest item to `-keep-tokens`, then moves to a
+complete provider boundary: no call/output pair may be split and a
+reasoning/call batch stays whole. The nearest real user message at or before
+that boundary is copied into the retained tail with `pin.kind = user_input`, so
+a one-request session can summarize older work inside the same request without
+losing the instruction. A synthetic historical summary is never an anchor or a
+retained item. No-fit boundaries, non-reducing plans, and oversized summaries
+report a reason and leave the source unchanged. `-keep-tokens` is a target, not
+a cap.
+
+Tests cover the 493-item single-request regression, exact request and
+constraint projection below the 80k target, parallel and split batches, the
+synthetic-summary case, repeated checkpoints, and a real-Cake in-place round
+trip. The live recall probe is `docs/single-request-recall-probe.md`; it needs
+separate spend authorization.
+
 ## Later
 
 - Add a small `-payload-out` or dry-run payload printer so other tools can
@@ -50,6 +69,6 @@ summary.
   in-place works (export/handoff is the remaining use).
 - Add a summary-quality/prompt-injection note to any qualification work; the
   current POC does not evaluate it.
-- Consider exposing exact pins (current user input, observed skill reads,
-  unconsumed images) in the payload. The verb accepts the metadata; this caller
-  does not produce it yet.
+- Consider exposing exact pins for observed skill reads and unconsumed images.
+  The caller now pins the owning user request; the other pin kinds are not
+  produced yet.

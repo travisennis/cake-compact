@@ -300,6 +300,8 @@ func commandInspect(args []string) int {
 		EffectiveItems:  len(plan.Projected),
 		PrefixItems:     len(plan.Prefix),
 		RetainedItems:   len(plan.Retained),
+		AnchorItem:      plan.Anchor,
+		PinnedRequest:   plan.Anchor >= 0,
 		BeforeTokens:    plan.BeforeTokens,
 		RetainedTokens:  plan.RetainedTokens,
 		Window:          plan.Window,
@@ -328,6 +330,11 @@ func commandInspect(args []string) int {
 		fmt.Println("context window: unknown (use -window or -threshold-tokens)")
 	}
 	fmt.Printf("effective items: %d (prefix %d, retained %d)\n", result.EffectiveItems, result.PrefixItems, result.RetainedItems)
+	if result.PinnedRequest {
+		fmt.Printf("pinned request: item %d\n", result.AnchorItem)
+	} else {
+		fmt.Println("pinned request: none (no real user message at or before the tail)")
+	}
 	fmt.Printf("retained estimate: %d tokens (target %d)\n", result.RetainedTokens, result.KeepTarget)
 	if result.Compact {
 		fmt.Println("would compact: yes")
@@ -344,6 +351,8 @@ type inspectResult struct {
 	EffectiveItems  int    `json:"effective_items"`
 	PrefixItems     int    `json:"prefix_items"`
 	RetainedItems   int    `json:"retained_items"`
+	AnchorItem      int    `json:"anchor_item"`
+	PinnedRequest   bool   `json:"pinned_request"`
 	BeforeTokens    uint64 `json:"before_tokens"`
 	RetainedTokens  uint64 `json:"retained_tokens"`
 	Window          uint64 `json:"window,omitempty"`

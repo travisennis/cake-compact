@@ -49,9 +49,13 @@ keep a checkpoint-aware binary for compacted sessions.
    latest checkpoint's summary plus retained tail plus later records when one
    exists.
 4. It selects a suffix of at least `-keep-tokens` (default 20,000 or a quarter
-   of the window), moved back to a real user message so the retained tail starts
-   at a complete request. A suffix that would split a call/output pair is moved
-   back until it is complete.
+   of the window), then moves its start back to a complete provider boundary: a
+   suffix that would split a call/output pair, or begin inside a
+   reasoning/call batch, moves back until the batch is whole. The real user
+   message that owns the tail (the nearest one at or before the boundary) is
+   copied into the retained tail with a `user_input` pin, so the request stays
+   exact while older work in the same request is summarized. The synthetic
+   historical summary is never treated as an anchor.
 5. It estimates the retired and retained sizes. `before_tokens` anchors on the
    newest complete `turn_usage.input_tokens` when that measurement is newer than
    the latest checkpoint (`basis: measured_usage`); when a checkpoint is newer,
@@ -80,6 +84,43 @@ keep a checkpoint-aware binary for compacted sessions.
 
 Nothing in Cake changes. The in-place path never writes session JSONL itself;
 the fork path is reached only through `-fork`.
+
+### Selection and budget
+
+Selection works on the effective conversation, so a session that already has a
+checkpoint starts from its summary plus retained tail rather than the raw
+prefix it replaced.
+
+- Walk backward from the newest item until the estimate reaches
+  `-keep-tokens`. That is the initial budget boundary.
+- Move the boundary back until the suffix is a complete provider history: no
+  call without its output, no output without its call, and a message or
+  reasoning item may not interrupt an open call. If the boundary lands on a
+  call or inside a reasoning run, include the rest of that batch.
+- Find the nearest real user message at or before the boundary. It is copied
+  into the retained tail verbatim with `pin.kind = user_input`; everything
+  between that request and the tail is summarized. One-request sessions can
+  therefore retire most of a long completed invocation without losing the
+  instruction that started it.
+- A synthetic historical summary is not a user message and never becomes an
+  anchor or a pin. If no real request remains at or before the boundary, the
+  tail starts at the first complete batch and the old summary is folded into
+  the new one.
+- The retained tail is estimated, then the summary is added. A plan is refused
+  when no complete boundary exists, nothing precedes the tail, the retained
+  tail alone does not reduce the context, the summary does not reduce it, or
+  the summary transcript exceeds its bound. The result document names the
+  reason and the source session is left unchanged.
+
+`-keep-tokens` is a target, not a cap. A single indivisible tool result or the
+pinned request can push the retained estimate above it. `after_tokens` is also
+an estimate (4 characters per token, a 25% safety margin, and 1,000 tokens per
+inline image), and the 80k quality target used in qualification is a policy
+choice, not the model window maximum. Do not treat either number as a
+provider-measured bound.
+
+`inspect -json` reports `anchor_item` and `pinned_request`, so the request that
+would be preserved (or the absence of one) is visible before a compaction.
 
 ### In place vs fork
 
@@ -249,7 +290,7 @@ Run `cake-compact help` for the full list. The important ones:
 | `-threshold-percent` | Trigger at this percent of the context window (default 80). |
 | `-threshold-tokens` | Explicit trigger instead of a percentage. |
 | `-window` | Override the window read from the session. |
-| `-keep-tokens` | Retained-tail target (default 20,000 or window/4). |
+| `-keep-tokens` | Retained-tail target (default 20,000 or window/4). A target, not a cap: an indivisible item or the pinned request can exceed it. |
 | `-min-reduction-percent` | Minimum estimated reduction (default 10). |
 | `-force` | Ignore the trigger and minimum reduction. |
 | `-summary-file` | Use a fixed summary. |
@@ -276,17 +317,18 @@ is reported as success; otherwise the source file is left byte-stable.
   window in one `cake` process cannot be compacted by an external wrapper,
   because Cake holds the session lock and only restores/projects at invocation
   start. That is what core M3/M4 would add.
-- No exact pins beyond what this prototype chooses: current user input,
-  observed skill instruction reads, and unconsumed images get no special
-  treatment beyond starting the retained tail at a user message. The verb
-  preserves pin and provenance metadata when the caller supplies it; this
-  caller does not. If those guarantees matter, they need core support.
+- Exact pins are limited to the owning user request: it is retained verbatim
+  with `pin.kind = user_input`. Observed skill instruction reads and unconsumed
+  images are not detected or pinned, and a synthetic historical summary is
+  never pinned. The verb preserves pin and provenance metadata when the caller
+  supplies it; this caller supplies only the request pin.
 - Token counts are estimates: 4 characters per token, plus a 25% safety margin,
   plus 1,000 tokens per inline image. `before_tokens` anchors on the
   provider's last reported input when that measurement is newer than the latest
   checkpoint; otherwise it is derived from the checkpoint or a content
-  estimate. `after_tokens` is an estimate. Cake enforces only that the append
-  reduces the estimate.
+  estimate. `after_tokens` is an estimate. `-keep-tokens` is a target: the
+  pinned request and any indivisible item stay whole, so the retained estimate
+  can exceed it. Cake enforces only that the append reduces the estimate.
 - The summary is one model call over the retired prefix. There is no batching,
   no bounded multi-request summarization, and no real-model quality
   qualification. A prefix whose transcript exceeds 800,000 characters fails
@@ -306,18 +348,25 @@ is reported as success; otherwise the source file is left byte-stable.
 
 ## Verified
 
-- `go test ./...`: session parsing/projection, checkpoint construction, suffix
-  selection (including parallel and split calls), dry-run, reduction guard,
-  repeated compaction, fake-cake run orchestration, state updates, and the
-  in-place contract: prior bytes preserved, stable session id, a second append
-  selecting the newest checkpoint, rejected payloads and locked sessions
-  leaving the file byte-stable, missing-verb detection with no fallback, the
-  subprocess payload shape, summarizer cancellation, and recognition of an
-  append that completed before an interrupt.
+- `go test ./...`: session parsing/projection, checkpoint construction, bounded
+  suffix selection (parallel calls, split calls, reasoning/call batches, and
+  the single-request regression with a pinned request), dry-run, reduction
+  guard, no-fit reasons, repeated compaction, fake-cake run orchestration,
+  state updates, and the in-place contract: prior bytes preserved, stable
+  session id, a second append selecting the newest checkpoint, rejected
+  payloads and locked sessions leaving the file byte-stable, missing-verb
+  detection with no fallback, the subprocess payload shape, summarizer
+  cancellation, and recognition of an append that completed before an
+  interrupt.
 - `CAKE_BIN=/path/to/cake just test-cake`: the generated checkpoint is accepted
   by real Cake; replay shows the raw transcript plus exactly one checkpoint
-  (two after a second append), the source session id is unchanged, and real
-  Cake rejects an invalid payload and a locked session without writing.
+  (two after a second append), the source session id is unchanged, a pinned
+  request with a mid-exchange tail round-trips through the verb and projection,
+  and real Cake rejects an invalid payload and a locked session without
+  writing.
+- Offline structural checks are not live quality evidence. The no-tool recall
+  and continuation probe that needs separate spend authorization is in
+  [`docs/single-request-recall-probe.md`](docs/single-request-recall-probe.md).
 - Manual end-to-end check against a local mock provider: three `run` turns, a
   compaction after the second, and a third provider request containing the
   historical summary and the recent exchange but not the retired first prompt.

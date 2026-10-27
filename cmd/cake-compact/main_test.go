@@ -90,6 +90,36 @@ func writeSummaryFile(t *testing.T) string {
 	return path
 }
 
+func TestInspectReportsThePinnedRequest(t *testing.T) {
+	dataDir, _ := writeSessionFixture(t)
+	code, stdout, stderr := captureOutput(t, func() int {
+		return runCLI([]string{
+			"inspect",
+			"-data-dir", dataDir,
+			"-keep-tokens", "1",
+			"-json",
+			testSourceID,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["pinned_request"] != true {
+		t.Fatalf("pinned_request = %v, want true", result["pinned_request"])
+	}
+	if result["anchor_item"] != float64(2) {
+		t.Fatalf("anchor_item = %v, want the second user message at 2", result["anchor_item"])
+	}
+	if result["prefix_items"] != float64(2) || result["retained_items"] != float64(2) {
+		t.Fatalf("prefix/retained = %v/%v, want 2/2", result["prefix_items"], result["retained_items"])
+	}
+}
+
 func TestRunCompactsInPlaceAndKeepsTheSession(t *testing.T) {
 	dataDir, sourcePath := writeSessionFixture(t)
 	original, err := os.ReadFile(sourcePath)

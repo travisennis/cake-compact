@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/travisennis/cake-compact/internal/cakecli"
 	"github.com/travisennis/cake-compact/internal/session"
@@ -147,6 +148,80 @@ func TestRealCakeInPlaceRoundTrip(t *testing.T) {
 	}
 	if got := countType(lines, "message"); got != 7 {
 		t.Fatalf("replay emitted %d raw messages, want the 7 stored messages", got)
+	}
+}
+
+func TestRealCakeInPlacePinsTheOwningRequest(t *testing.T) {
+	binary := realCakeBinary(t)
+	dataDir := t.TempDir()
+	sourcePath := writeSingleRequestFixture(t, dataDir)
+	original := readFile(t, sourcePath)
+
+	compactor := &Compactor{
+		Mode:    ModeInPlace,
+		DataDir: dataDir,
+		CakeBin: binary,
+		Options: Options{
+			ThresholdTokens: 60000,
+			KeepTokens:      10000,
+			SummaryFile:     writeSummary(t, singleRequestSummary),
+			Trigger:         "threshold",
+		},
+		Now:   time.Now,
+		NewID: NewUUID,
+	}
+	result, err := compactor.Compact(context.Background(), sourcePath)
+	if err != nil {
+		t.Fatalf("in-place compaction: %v", err)
+	}
+	if !result.Compacted || result.SessionID != sourceID {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if !bytes.HasPrefix(readFile(t, sourcePath), original) {
+		t.Fatal("prior session bytes changed")
+	}
+
+	file, err := session.Load(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := file.Records[file.LatestCheckpointIndex()].Checkpoint
+	if checkpoint == nil || len(checkpoint.Retained) == 0 {
+		t.Fatalf("missing checkpoint: %+v", checkpoint)
+	}
+
+	var head struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Content string `json:"content"`
+		Pin     *struct {
+			Kind string `json:"kind"`
+		} `json:"pin"`
+	}
+	if err := json.Unmarshal(checkpoint.Retained[0], &head); err != nil {
+		t.Fatal(err)
+	}
+	if head.Type != "message" || head.Role != "user" || head.Content != singleRequestText {
+		t.Fatalf("retained head changed the request: %+v", head)
+	}
+	if head.Pin == nil || head.Pin.Kind != "user_input" {
+		t.Fatalf("real cake did not retain the user_input pin: %+v", head.Pin)
+	}
+
+	projected, err := file.Projected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projected) < 2 || !projected[0].Synthetic || projected[1].Message == nil || projected[1].Message.Content != singleRequestText {
+		t.Fatalf("projection does not preserve the request: %+v", projected)
+	}
+	if got := session.EstimateTokens(projected); got >= 80000 {
+		t.Fatalf("projected context estimate = %d, want below the 80000 quality target", got)
+	}
+
+	lines := replayRecords(t, binary, dataDir, sourceID)
+	if got := countType(lines, "compaction"); got != 1 {
+		t.Fatalf("replay emitted %d compaction records, want 1", got)
 	}
 }
 
