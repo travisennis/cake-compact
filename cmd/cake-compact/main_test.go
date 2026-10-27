@@ -118,6 +118,33 @@ func TestInspectReportsThePinnedRequest(t *testing.T) {
 	if result["prefix_items"] != float64(2) || result["retained_items"] != float64(2) {
 		t.Fatalf("prefix/retained = %v/%v, want 2/2", result["prefix_items"], result["retained_items"])
 	}
+	timings, ok := result["timings"].(map[string]any)
+	if !ok {
+		t.Fatalf("timings = %v, want an object", result["timings"])
+	}
+	for _, key := range []string{"total_ms", "load_ms", "plan_ms"} {
+		if _, ok := timings[key]; !ok {
+			t.Fatalf("timings has no %s: %v", key, timings)
+		}
+	}
+}
+
+func TestInspectVerbosePrintsTimings(t *testing.T) {
+	dataDir, _ := writeSessionFixture(t)
+	code, _, stderr := captureOutput(t, func() int {
+		return runCLI([]string{
+			"inspect",
+			"-data-dir", dataDir,
+			"-verbose",
+			testSourceID,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "cake-compact: timings:") {
+		t.Fatalf("verbose inspect did not print timings: %s", stderr)
+	}
 }
 
 func TestRunCompactsInPlaceAndKeepsTheSession(t *testing.T) {

@@ -61,6 +61,30 @@ synthetic-summary case, repeated checkpoints, and a real-Cake in-place round
 trip. The live recall probe is `docs/single-request-recall-probe.md`; it needs
 separate spend authorization.
 
+## Stage timing (done)
+
+`compact -json` and `inspect -json` now report `timings`: `load_ms`, `plan_ms`,
+`preflight_ms`, `summary_ms`, `commit_ms`, `verify_ms`, and `total_ms`. Existing
+fields are unchanged; `summary_time_ms` remains the compatibility alias for the
+summary stage. `-verbose` prints the same durations to stderr. Only numbers are
+recorded, never transcript or secret content.
+
+The baseline in `docs/compaction-stage-baseline.md` uses real Cake against temp
+copies and a fixed summary file. On the 1.2 MB single-request session, in-place
+total time was 33–39 ms, with 23–28 ms in the checkpoint subprocess; on the 2.0
+MB `f8d30612` session it was 42–46 ms total, with 30–33 ms in the checkpoint
+subprocess. The observed 31.7-second live gap is therefore not local wrapper
+payload, planning, or append work. The unmeasured stage is the summary call
+(Cake startup plus provider latency); reducing it requires a model, prompt, or
+quality tradeoff, not a local optimization. Do not change the default
+model/profile without separate authorization. The duplicate in-place preflight
+in `run` would save only about 4–5 ms, so it was left alone.
+
+Controlled-delay tests cover summary, preflight, commit, and fork verification;
+no-op results report only load, plan, and total, and failed attempts return no
+timing document. `just ci`, `go test -race ./...`, and the real-Cake `test-cake`
+run pass without a model call.
+
 ## Later
 
 - Add a small `-payload-out` or dry-run payload printer so other tools can

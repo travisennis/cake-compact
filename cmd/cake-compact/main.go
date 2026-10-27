@@ -90,7 +90,7 @@ Flags shared by all commands:
   -no-verify                  skip the final cake replay validation (fork only)
   -timeout <duration>         summary and verification deadline (default 5m)
   -json                       machine-readable output
-  -verbose                    show plan and compaction detail on stderr
+  -verbose                    show plan, compaction, and stage timing detail on stderr
 
 Run-only flags:
   -resume <uuid>              resume this session instead of the saved one
@@ -256,6 +256,9 @@ func commandCompact(args []string) int {
 		fmt.Fprintln(os.Stderr, "cake-compact:", err)
 		return 1
 	}
+	if flags.verbose {
+		logTimings(result.Timings)
+	}
 	return printCompactionResult(result, flags.jsonOut)
 }
 
@@ -278,16 +281,20 @@ func commandInspect(args []string) int {
 		return 1
 	}
 	path := resolveSessionPath(fs.Arg(0), dataDir)
+	started := time.Now()
 	file, err := session.Load(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cake-compact:", err)
 		return 1
 	}
+	loadMs := time.Since(started).Milliseconds()
+	planStarted := time.Now()
 	plan, decision, err := compact.Analyze(file, flags.options("threshold", flags.force))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cake-compact:", err)
 		return 1
 	}
+	planMs := time.Since(planStarted).Milliseconds()
 
 	checkpointID := ""
 	if index := file.LatestCheckpointIndex(); index >= 0 {
@@ -310,6 +317,14 @@ func commandInspect(args []string) int {
 		Basis:           plan.Basis,
 		Compact:         decision.Compact,
 		Reason:          decision.Reason,
+		Timings: &compact.Timings{
+			TotalMs: time.Since(started).Milliseconds(),
+			LoadMs:  &loadMs,
+			PlanMs:  &planMs,
+		},
+	}
+	if flags.verbose {
+		logTimings(result.Timings)
 	}
 	if flags.jsonOut {
 		return writeJSON(result)
@@ -345,22 +360,23 @@ func commandInspect(args []string) int {
 }
 
 type inspectResult struct {
-	SessionID       string `json:"session_id"`
-	SessionFile     string `json:"session_file"`
-	CheckpointID    string `json:"checkpoint_id,omitempty"`
-	EffectiveItems  int    `json:"effective_items"`
-	PrefixItems     int    `json:"prefix_items"`
-	RetainedItems   int    `json:"retained_items"`
-	AnchorItem      int    `json:"anchor_item"`
-	PinnedRequest   bool   `json:"pinned_request"`
-	BeforeTokens    uint64 `json:"before_tokens"`
-	RetainedTokens  uint64 `json:"retained_tokens"`
-	Window          uint64 `json:"window,omitempty"`
-	ThresholdTokens uint64 `json:"threshold_tokens,omitempty"`
-	KeepTarget      uint64 `json:"keep_target"`
-	Basis           string `json:"basis"`
-	Compact         bool   `json:"compact"`
-	Reason          string `json:"reason"`
+	SessionID       string           `json:"session_id"`
+	SessionFile     string           `json:"session_file"`
+	CheckpointID    string           `json:"checkpoint_id,omitempty"`
+	EffectiveItems  int              `json:"effective_items"`
+	PrefixItems     int              `json:"prefix_items"`
+	RetainedItems   int              `json:"retained_items"`
+	AnchorItem      int              `json:"anchor_item"`
+	PinnedRequest   bool             `json:"pinned_request"`
+	BeforeTokens    uint64           `json:"before_tokens"`
+	RetainedTokens  uint64           `json:"retained_tokens"`
+	Window          uint64           `json:"window,omitempty"`
+	ThresholdTokens uint64           `json:"threshold_tokens,omitempty"`
+	KeepTarget      uint64           `json:"keep_target"`
+	Basis           string           `json:"basis"`
+	Compact         bool             `json:"compact"`
+	Reason          string           `json:"reason"`
+	Timings         *compact.Timings `json:"timings,omitempty"`
 }
 
 func commandRun(args []string) int {
@@ -615,6 +631,9 @@ func commandRun(args []string) int {
 						fmt.Fprintf(os.Stderr, "cake-compact: no compaction: %s\n", result.Reason)
 					}
 				}
+				if flags.verbose && result != nil {
+					logTimings(result.Timings)
+				}
 			}
 		}
 	}
@@ -643,6 +662,31 @@ type runOutput struct {
 	Error           string          `json:"error,omitempty"`
 	Compaction      *compact.Result `json:"compaction,omitempty"`
 	CompactionError string          `json:"compaction_error,omitempty"`
+}
+
+func logTimings(timings *compact.Timings) {
+	if timings == nil {
+		return
+	}
+	var builder strings.Builder
+	builder.WriteString("cake-compact: timings:")
+	for _, stage := range []struct {
+		name  string
+		value *int64
+	}{
+		{"load", timings.LoadMs},
+		{"plan", timings.PlanMs},
+		{"preflight", timings.PreflightMs},
+		{"summary", timings.SummaryMs},
+		{"commit", timings.CommitMs},
+		{"verify", timings.VerifyMs},
+	} {
+		if stage.value != nil {
+			fmt.Fprintf(&builder, " %s=%dms", stage.name, *stage.value)
+		}
+	}
+	fmt.Fprintf(&builder, " total=%dms", timings.TotalMs)
+	fmt.Fprintln(os.Stderr, builder.String())
 }
 
 func printCompactionResult(result *compact.Result, jsonOut bool) int {

@@ -218,7 +218,15 @@ Every command accepts `-json`.
     "output_tokens": 300,
     "total_tokens": 1500
   },
-  "summary_time_ms": 8420
+  "summary_time_ms": 8420,
+  "timings": {
+    "total_ms": 8560,
+    "load_ms": 12,
+    "plan_ms": 1,
+    "preflight_ms": 5,
+    "summary_ms": 8420,
+    "commit_ms": 122
+  }
 }
 ```
 
@@ -241,11 +249,34 @@ Every command accepts `-json`.
 | `retained_count` | Retained records Cake persisted (same as `retained_items` on success). |
 | `summary_chars` / `transcript_chars` | Sizes used for the summary call. |
 | `summary_usage` | The summarizer's provider-reported tokens. Absent when the summarizer is a file or command, or the provider reported none. |
-| `summary_time_ms` | Wall time of the summary call. Absent when no summary call was made. |
+| `summary_time_ms` | Wall time of the summary stage, including a summary-file read or command/model call. Present when nonzero; kept for compatibility. |
+| `timings` | Stage wall times in whole milliseconds. See [Stage timing](#stage-timing). |
 
 On a non-compaction result, `compacted` is `false` and `reason` says why;
 `session_id`, `session_file`, `checkpoint_id`, and `boundary` are absent. Use
 `source_session_id` as the session to resume.
+
+### Stage timing
+
+`compact -json` and `inspect -json` include a `timings` object. It carries only
+durations; it never includes transcript text, file contents, prompts, or
+secrets. `-verbose` prints the same numbers to stderr as a diagnostic.
+
+| Field | Stage |
+| --- | --- |
+| `total_ms` | Wall time from after mode/config validation through result assembly. Always present. Excludes process startup, flag parsing, and the `run` Cake turn; includes gaps not assigned to a stage. |
+| `load_ms` | Open, shared-lock, and parse the session file. |
+| `plan_ms` | Project the effective conversation, read the measurement, apply the threshold, select the tail, and build the pinned request. |
+| `preflight_ms` | In-place only: probe `cake sessions checkpoint --help` before spending a summary call. The `run` turn's earlier preflight is outside this measurement. |
+| `summary_ms` | Build the transcript and run the summary stage: fixed file, command, or Cake model call. Equals `summary_time_ms` when both are present. |
+| `commit_ms` | In place: build the payload and run `cake sessions checkpoint` (Cake's validation, lock, append, and sync). Fork: build and write the new session file. |
+| `verify_ms` | Fork only: `cake replay` validation. |
+
+A stage that did not run is omitted; a stage that ran can be `0` on a fast
+machine. `total_ms` can exceed the sum of the stages because of unmeasured gaps
+such as result assembly. `inspect` reports only `total_ms`, `load_ms`, and
+`plan_ms`. A failure returns an error instead of a result document, so failed
+attempts have no timing object.
 
 `run -json` prints:
 
@@ -364,6 +395,11 @@ is reported as success; otherwise the source file is left byte-stable.
   request with a mid-exchange tail round-trips through the verb and projection,
   and real Cake rejects an invalid payload and a locked session without
   writing.
+- Stage timing and total duration are covered by controlled-delay tests: a
+  delayed summarizer and fake Cake subprocess prove the summary, preflight,
+  commit, and fork verification fields, while no-op and failure paths do not
+  invent stages. The reproducible local baseline is
+  [`docs/compaction-stage-baseline.md`](docs/compaction-stage-baseline.md).
 - Offline structural checks are not live quality evidence. The no-tool recall
   and continuation probe that needs separate spend authorization is in
   [`docs/single-request-recall-probe.md`](docs/single-request-recall-probe.md).

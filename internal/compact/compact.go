@@ -128,6 +128,37 @@ type Result struct {
 	// wall time spent in the summary call, zero when no call was made.
 	SummaryUsage  *cakecli.Usage `json:"summary_usage,omitempty"`
 	SummaryTimeMs int64          `json:"summary_time_ms,omitempty"`
+	Timings       *Timings       `json:"timings,omitempty"`
+}
+
+// Timings reports wall time spent in each compaction stage, in whole
+// milliseconds. A nil stage did not run. TotalMs is present on every result and
+// includes the stages plus unmeasured gaps such as result assembly.
+type Timings struct {
+	TotalMs     int64  `json:"total_ms"`
+	LoadMs      *int64 `json:"load_ms,omitempty"`
+	PlanMs      *int64 `json:"plan_ms,omitempty"`
+	PreflightMs *int64 `json:"preflight_ms,omitempty"`
+	SummaryMs   *int64 `json:"summary_ms,omitempty"`
+	CommitMs    *int64 `json:"commit_ms,omitempty"`
+	VerifyMs    *int64 `json:"verify_ms,omitempty"`
+}
+
+func (result *Result) ensureTimings() *Timings {
+	if result.Timings == nil {
+		result.Timings = &Timings{}
+	}
+	return result.Timings
+}
+
+// stageMillis converts one measured stage. A backward clock is clamped so the
+// document never reports a negative duration.
+func stageMillis(elapsed time.Duration) *int64 {
+	milliseconds := elapsed.Milliseconds()
+	if milliseconds < 0 {
+		milliseconds = 0
+	}
+	return &milliseconds
 }
 
 // Analyze computes the effective context, applies the threshold, and selects a
@@ -460,7 +491,7 @@ func (c *Compactor) logf(format string, args ...any) {
 // The in-place path appends through `cake sessions checkpoint` and leaves the
 // source file otherwise byte-identical. The fork path writes a new
 // checkpoint-only session and validates it with `cake replay`.
-func (c *Compactor) Compact(ctx context.Context, sourcePath string) (*Result, error) {
+func (c *Compactor) Compact(ctx context.Context, sourcePath string) (result *Result, err error) {
 	if c.Mode != ModeInPlace && c.Mode != ModeFork {
 		return nil, ErrModeRequired
 	}
@@ -475,17 +506,32 @@ func (c *Compactor) Compact(ctx context.Context, sourcePath string) (*Result, er
 		c.NewID = NewUUID
 	}
 
+	started := c.Now()
+	defer func() {
+		if result != nil && result.Timings != nil {
+			total := c.Now().Sub(started).Milliseconds()
+			if total < 0 {
+				total = 0
+			}
+			result.Timings.TotalMs = total
+		}
+	}()
+
+	loadStarted := c.Now()
 	file, err := session.Load(sourcePath)
 	if err != nil {
 		return nil, err
 	}
+	loadMs := stageMillis(c.Now().Sub(loadStarted))
 
+	planStarted := c.Now()
 	plan, decision, err := Analyze(file, c.Options)
 	if err != nil {
 		return nil, err
 	}
+	planMs := stageMillis(c.Now().Sub(planStarted))
 
-	result := &Result{
+	result = &Result{
 		SourceSessionID: file.SessionID(),
 		InPlace:         c.Mode == ModeInPlace,
 		Trigger:         plan.Trigger,
@@ -496,6 +542,10 @@ func (c *Compactor) Compact(ctx context.Context, sourcePath string) (*Result, er
 		PrefixItems:     len(plan.Prefix),
 		RetainedItems:   len(plan.Retained),
 		AfterTokens:     plan.RetainedTokens,
+		Timings: &Timings{
+			LoadMs: loadMs,
+			PlanMs: planMs,
+		},
 	}
 	if !decision.Compact {
 		result.Reason = decision.Reason
@@ -517,9 +567,11 @@ func (c *Compactor) Compact(ctx context.Context, sourcePath string) (*Result, er
 
 	if c.Mode == ModeInPlace {
 		// Fail before spending a model call on a binary that cannot commit.
+		preflightStarted := c.Now()
 		if err := c.requireCheckpointVerb(ctx); err != nil {
 			return nil, err
 		}
+		result.Timings.PreflightMs = stageMillis(c.Now().Sub(preflightStarted))
 	}
 
 	summary, err := c.summarizeForResult(ctx, plan, result)
@@ -550,10 +602,11 @@ func (c *Compactor) Compact(ctx context.Context, sourcePath string) (*Result, er
 
 	switch c.Mode {
 	case ModeInPlace:
-		return c.appendInPlace(ctx, file, plan, decision, result, summary)
+		result, err = c.appendInPlace(ctx, file, plan, decision, result, summary)
 	default:
-		return c.writeFork(ctx, file, plan, decision, result, summary, after)
+		result, err = c.writeFork(ctx, file, plan, decision, result, summary, after)
 	}
+	return result, err
 }
 
 // requireCheckpointVerb turns a Cake build without the checkpoint verb into a
@@ -575,6 +628,7 @@ func (c *Compactor) appendInPlace(
 	result *Result,
 	summary string,
 ) (*Result, error) {
+	commitStarted := c.Now()
 	sessionID, err := c.inPlaceSessionID(file)
 	if err != nil {
 		return nil, err
@@ -593,6 +647,7 @@ func (c *Compactor) appendInPlace(
 	}
 
 	outcome, err := cakecli.Checkpoint(ctx, c.CakeBin, c.DataDir, sessionID, payload)
+	result.ensureTimings().CommitMs = stageMillis(c.Now().Sub(commitStarted))
 	if err != nil {
 		// A cancelled child can still have completed its append: Cake writes
 		// the record under the session lock and syncs it before exiting. Only
@@ -707,6 +762,7 @@ func (c *Compactor) writeFork(
 	summary string,
 	after uint64,
 ) (*Result, error) {
+	commitStarted := c.Now()
 	newID, err := c.resolveNewID()
 	if err != nil {
 		return nil, err
@@ -719,11 +775,15 @@ func (c *Compactor) writeFork(
 	if err := writeSession(path, file.Meta, newID, line, c.Now()); err != nil {
 		return nil, err
 	}
+	result.ensureTimings().CommitMs = stageMillis(c.Now().Sub(commitStarted))
 
 	if c.Verify {
-		if _, err := cakecli.Replay(ctx, c.CakeBin, c.DataDir, newID); err != nil {
+		verifyStarted := c.Now()
+		_, replayErr := cakecli.Replay(ctx, c.CakeBin, c.DataDir, newID)
+		result.ensureTimings().VerifyMs = stageMillis(c.Now().Sub(verifyStarted))
+		if replayErr != nil {
 			_ = os.Remove(path)
-			return nil, fmt.Errorf("compacted session failed validation and was removed: %w", err)
+			return nil, fmt.Errorf("compacted session failed validation and was removed: %w", replayErr)
 		}
 	}
 
@@ -839,7 +899,9 @@ func (c *Compactor) resolveNewID() (string, error) {
 func (c *Compactor) summarizeForResult(ctx context.Context, plan *Plan, result *Result) (string, error) {
 	started := c.Now()
 	summary, usage, transcriptChars, err := c.summarize(ctx, plan)
-	result.SummaryTimeMs = c.Now().Sub(started).Milliseconds()
+	elapsed := c.Now().Sub(started)
+	result.SummaryTimeMs = elapsed.Milliseconds()
+	result.ensureTimings().SummaryMs = stageMillis(elapsed)
 	if usage != (cakecli.Usage{}) {
 		result.SummaryUsage = &usage
 	}

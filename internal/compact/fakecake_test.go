@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ const (
 	fakeCakeEnable = "CAKE_COMPACT_FAKE"
 	fakeCakeMode   = "CAKE_COMPACT_FAKE_MODE"
 	fakePayloadOut = "CAKE_COMPACT_PAYLOAD_OUT"
+	fakeCakeDelay  = "CAKE_COMPACT_FAKE_DELAY_MS"
 )
 
 // TestFakeCakeHelper is the offline stand-in for a Cake binary. The tests run
@@ -37,6 +39,17 @@ func fakeCakeMain(args []string) int {
 	for _, arg := range args {
 		if !strings.HasPrefix(arg, "-") {
 			positional = append(positional, arg)
+		}
+	}
+	if raw := os.Getenv(fakeCakeDelay); raw != "" {
+		if milliseconds, err := strconv.Atoi(raw); err == nil && milliseconds > 0 {
+			time.Sleep(time.Duration(milliseconds) * time.Millisecond)
+		}
+	}
+	for _, arg := range positional {
+		if arg == "replay" {
+			fmt.Println(`{"type":"compaction"}`)
+			return 0
 		}
 	}
 	if len(positional) < 2 || positional[0] != "sessions" || positional[1] != "checkpoint" {
