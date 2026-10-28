@@ -201,7 +201,7 @@ CAKE_BIN=/path/to/cake just test-cake
 ## Use
 
 ```sh
-# Confirm the installed build revision and time.
+# Confirm the installed build revision and commit time.
 cake-compact version
 
 # First turn in this directory.
@@ -452,6 +452,9 @@ is reported as success; otherwise the source file is left byte-stable.
   detection with no fallback, the subprocess payload shape, summarizer
   cancellation, and recognition of an append that completed before an
   interrupt.
+- `cake-compact version` reads `runtime/debug.ReadBuildInfo` and prints the
+  embedded `vcs.revision` and `vcs.time`, with `(modified)` for a dirty build;
+  table tests cover present, modified, and absent metadata. No model call.
 - Summarizer runtime context is covered offline: a fake child proves the
   default invocation passes `--no-runtime-context`; a binary whose `--help`
   lacks the flag fails with the upgrade message before a second invocation and

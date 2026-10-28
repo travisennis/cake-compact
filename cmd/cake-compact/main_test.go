@@ -98,7 +98,7 @@ func TestVersionText(t *testing.T) {
 				{Key: "vcs.time", Value: "2026-10-28T14:14:30Z"},
 				{Key: "vcs.modified", Value: "false"},
 			}},
-			want: baseVersion + "\nrevision 7e21261b99bbc1b4c6afcdc080421a431181d415\nbuilt 2026-10-28T14:14:30Z",
+			want: baseVersion + "\nrevision 7e21261b99bbc1b4c6afcdc080421a431181d415\ntime 2026-10-28T14:14:30Z",
 		},
 		{
 			name: "modified revision",

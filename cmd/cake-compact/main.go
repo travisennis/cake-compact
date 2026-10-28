@@ -40,14 +40,14 @@ func versionText(info *debug.BuildInfo) string {
 		return baseVersion
 	}
 
-	var revision, buildTime string
+	var revision, commitTime string
 	modified := false
 	for _, setting := range info.Settings {
 		switch setting.Key {
 		case "vcs.revision":
 			revision = setting.Value
 		case "vcs.time":
-			buildTime = setting.Value
+			commitTime = setting.Value
 		case "vcs.modified":
 			modified = setting.Value == "true"
 		}
@@ -62,8 +62,8 @@ func versionText(info *debug.BuildInfo) string {
 	if modified {
 		b.WriteString(" (modified)")
 	}
-	if buildTime != "" {
-		fmt.Fprintf(&b, "\nbuilt %s", buildTime)
+	if commitTime != "" {
+		fmt.Fprintf(&b, "\ntime %s", commitTime)
 	}
 	return b.String()
 }
@@ -101,7 +101,7 @@ Usage:
   cake-compact run [flags] <prompt...>     run one cake turn, compacting when over threshold
   cake-compact compact [flags] <session>   compact an existing session in place
   cake-compact inspect [flags] <session>   show the context measurement and compaction plan
-  cake-compact version                     print version, revision, and build time
+  cake-compact version                     print version, revision, and commit time
 
 The session argument is a UUID (resolved under the cake sessions directory) or a
 path to a .jsonl session file. Compaction appends one checkpoint to the source
