@@ -186,6 +186,11 @@ just test-race
 just test-cake      # real-binary tests; needs CAKE_BIN
 ```
 
+After installing, `cake-compact version` prints the version line plus the
+embedded `vcs.revision` and `vcs.time` from the Git checkout. Compare the
+revision with `git rev-parse HEAD` to confirm the active binary; a build with
+local modifications is marked `(modified)`.
+
 `test-cake` defaults `CAKE_BIN` to `../cake/target/debug/cake`. Point it at any
 Cake build with the checkpoint verb:
 
@@ -196,6 +201,9 @@ CAKE_BIN=/path/to/cake just test-cake
 ## Use
 
 ```sh
+# Confirm the installed build revision and time.
+cake-compact version
+
 # First turn in this directory.
 cake-compact run "read the retry code and explain the policy"
 

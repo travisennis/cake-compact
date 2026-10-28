@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +31,41 @@ import (
 
 func main() {
 	os.Exit(runCLI(os.Args[1:]))
+}
+
+const baseVersion = "cake-compact 0.1.0 (proof of concept)"
+
+func versionText(info *debug.BuildInfo) string {
+	if info == nil {
+		return baseVersion
+	}
+
+	var revision, buildTime string
+	modified := false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.time":
+			buildTime = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if revision == "" {
+		return baseVersion
+	}
+
+	var b strings.Builder
+	b.WriteString(baseVersion)
+	fmt.Fprintf(&b, "\nrevision %s", revision)
+	if modified {
+		b.WriteString(" (modified)")
+	}
+	if buildTime != "" {
+		fmt.Fprintf(&b, "\nbuilt %s", buildTime)
+	}
+	return b.String()
 }
 
 func runCLI(args []string) int {
@@ -48,7 +84,8 @@ func runCLI(args []string) int {
 		usage()
 		return 0
 	case "version", "-V", "--version":
-		fmt.Println("cake-compact 0.1.0 (proof of concept)")
+		info, _ := debug.ReadBuildInfo()
+		fmt.Println(versionText(info))
 		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", args[0])
@@ -64,6 +101,7 @@ Usage:
   cake-compact run [flags] <prompt...>     run one cake turn, compacting when over threshold
   cake-compact compact [flags] <session>   compact an existing session in place
   cake-compact inspect [flags] <session>   show the context measurement and compaction plan
+  cake-compact version                     print version, revision, and build time
 
 The session argument is a UUID (resolved under the cake sessions directory) or a
 path to a .jsonl session file. Compaction appends one checkpoint to the source

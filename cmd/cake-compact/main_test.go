@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -65,6 +66,79 @@ func captureOutput(t *testing.T, run func() int) (int, string, string) {
 	_ = outRead.Close()
 	_ = errRead.Close()
 	return code, result.stdout, result.stderr
+}
+
+func TestVersionText(t *testing.T) {
+	tests := []struct {
+		name string
+		info *debug.BuildInfo
+		want string
+	}{
+		{
+			name: "no build info",
+			info: nil,
+			want: baseVersion,
+		},
+		{
+			name: "no VCS settings",
+			info: &debug.BuildInfo{},
+			want: baseVersion,
+		},
+		{
+			name: "time without revision",
+			info: &debug.BuildInfo{Settings: []debug.BuildSetting{
+				{Key: "vcs.time", Value: "2026-10-28T14:14:30Z"},
+			}},
+			want: baseVersion,
+		},
+		{
+			name: "revision and time",
+			info: &debug.BuildInfo{Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "7e21261b99bbc1b4c6afcdc080421a431181d415"},
+				{Key: "vcs.time", Value: "2026-10-28T14:14:30Z"},
+				{Key: "vcs.modified", Value: "false"},
+			}},
+			want: baseVersion + "\nrevision 7e21261b99bbc1b4c6afcdc080421a431181d415\nbuilt 2026-10-28T14:14:30Z",
+		},
+		{
+			name: "modified revision",
+			info: &debug.BuildInfo{Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "abc123"},
+				{Key: "vcs.modified", Value: "true"},
+			}},
+			want: baseVersion + "\nrevision abc123 (modified)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := versionText(tt.info); got != tt.want {
+				t.Fatalf("versionText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVersionCommandPrintsBuildRevision(t *testing.T) {
+	code, stdout, stderr := captureOutput(t, func() int {
+		return runCLI([]string{"version"})
+	})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.HasPrefix(stdout, baseVersion) {
+		t.Fatalf("stdout = %q, want prefix %q", stdout, baseVersion)
+	}
+
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" && setting.Value != "" && !strings.Contains(stdout, setting.Value) {
+			t.Fatalf("stdout does not include build revision %q:\n%s", setting.Value, stdout)
+		}
+	}
 }
 
 func writeSessionFixture(t *testing.T) (string, string) {
