@@ -160,6 +160,10 @@ is milliseconds against a 30–60 s summary call.
   in-place works (export/handoff is the remaining use).
 - Add a summary-quality/prompt-injection note to any qualification work; the
   current POC does not evaluate it.
+- Decide whether to include `content`-shaped reasoning (`reasoning_text`) in the
+  summary transcript. It is currently dropped because `Reasoning.Text()` reads
+  only `summary`; including it would raise input and the chance of the 800k cap,
+  and may expose sensitive reasoning.
 - Consider exposing exact pins for observed skill reads and unconsumed images.
   The caller now pins the owning user request; the other pin kinds are not
   produced yet.

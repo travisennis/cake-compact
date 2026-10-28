@@ -116,6 +116,8 @@ Illustrative targets, using the same model:
 
 ## What the summarizer actually reads
 
+### Reasoning is currently dropped
+
 `BuildTranscript` currently renders messages, function calls, and function
 outputs. It caps each tool call at 4,000 characters, each tool output at 6,000,
 and each reasoning item at 4,000. The reasoning branch is effectively dead:

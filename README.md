@@ -401,6 +401,10 @@ is reported as success; otherwise the source file is left byte-stable.
   no bounded multi-request summarization, and no real-model quality
   qualification. A prefix whose transcript exceeds 800,000 characters fails
   rather than silently dropping content.
+- The transcript includes reasoning only when the provider supplied a `summary`
+  array. Sessions that carry readable reasoning in `content`
+  (`reasoning_text`) are currently omitted; no test pins that choice. See
+  [docs/latency-deep-dive.md](docs/latency-deep-dive.md#reasoning-is-currently-dropped).
 - The summarizer is an LLM reading untrusted transcript content. Prompt
   injection, factual fidelity, and summary quality are not evaluated; this is
   exactly the gap Cake's separate qualification milestone exists to close.
