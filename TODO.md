@@ -148,9 +148,10 @@ the whole session still leaves no nonempty prefix, compaction is refused with a
 reason. `TestAnalyzeRaisesKeepToFitTheTranscriptCap` covers a 100,000-character
 cap on the 493-item single-request fixture.
 
-## Latency (open; spend-gated)
+## Latency (A1 low reasoning failed; spend-gated)
 
-Deep dive: `docs/latency-deep-dive.md` (2026-10-28, free analysis). The
+Deep dive: `docs/latency-deep-dive.md` (2026-10-28; free analysis plus the A1
+paid result). The
 summary call is output-bound: Phase 5 fits `ms ≈ 0.023 × input + 6.06 ×
 output + 383` (R² = 0.96), ~165 output tokens/s. Visible summaries are 1.6–2.7k
 tokens, but the provider reports 5.6–8.3k output tokens; 54–70% of main-turn
@@ -163,23 +164,26 @@ target before the summary call.
 
 Recommended order:
 
-1. Summarizer controls: `-summarizer-model` and `-summarizer-profile` exist;
-   `-summarizer-reasoning-effort` is implemented. Do not add
-   `-summary-max-tokens` or a fixed summary length target yet: visible summary
-   length has not been shown to be the problem, and a target would be arbitrary.
-   `summary_usage` now captures `reasoning_tokens`, `cached_tokens`, and
-   `summary_visible_tokens`; A1 is held until Trav reviews those numbers. Then
-   run the paid A/B on Phase 5 sessions (three summaries, ~0.5M input; no
-   follow-up turns) and grade against the annotation sheets. If A1 shows visible
-   output length is the remaining bottleneck, add a bounded output safety cap
-   then. Expected 30–60 s -> 10–18 s.
-2. Build an evidence pack (all messages, Edit/Write args, commands) plus a
+1. A1 low reasoning: Trav reviewed the persisted `summary_usage` on 2026-10-28
+   and unblocked A1. The three real summaries plus injection probe cut output
+   55% and hidden reasoning ~89%, but visible output stayed 1.7–2.8k; latency
+   was 16.7 / 28.7 / 33.5 s, so 4fc and 262 missed the under-20-s bar, and all
+   three missed the 800–1200 visible-token bar. Effective fidelity was 7/7 and
+   injection passed. A1 failed; A2 was not run. Visible summary length is now
+   the bottleneck. Details:
+   `../research/context-compaction-a1-results.md`.
+2. Add a structural summary target (800–1200 visible tokens) and a bounded
+   `-summary-max-tokens` safety net, rejecting length-stopped output. This is
+   the smallest next change, but validate exact-fact retention; a blunt cap can
+   drop the annotations' facts.
+3. Build an evidence pack (all messages, Edit/Write args, commands) plus a
    deterministic exact-reference ledger; the model writes only the narrative.
-   Expected 10–18 s -> 6–10 s, 65–80% less input, equal or better exact-fact
-   coverage. Add `-transcript-out` on dry-run so it can be inspected offline.
-3. Adaptive transcript budget: implemented; see "Adaptive transcript budget
+   Recommended next substantive path. Expected 10–18 s -> 6–10 s, 65–80% less
+   input, equal or better exact-fact coverage. Add `-transcript-out` on dry-run
+   so it can be inspected offline.
+4. Adaptive transcript budget: implemented; see "Adaptive transcript budget
    (done)". A higher default keep (50k–80k) and `-transcript-out` remain.
-4. Consider speculative summary during the turn only if the above still leaves
+5. Consider speculative summary during the turn only if the above still leaves
    more than ~15 s; core-native compaction is the long-term fix (cache reuse
    and in-turn boundaries).
 
@@ -192,8 +196,9 @@ is milliseconds against a 30–60 s summary call.
   produce the protocol payload without linking the Go code.
 - Decide whether the `-fork` escape hatch still earns its place now that
   in-place works (export/handoff is the remaining use).
-- Add a summary-quality/prompt-injection note to any qualification work; the
-  current POC does not evaluate it.
+- Add a summary-quality/prompt-injection note to any qualification work. A1
+  covered three Phase 5 sessions and the synthetic injection fixture; the full
+  qualification corpus is still not evaluated.
 - Decide whether to include `content`-shaped reasoning (`reasoning_text`) in the
   summary transcript. It is currently dropped because `Reasoning.Text()` reads
   only `summary`; including it would raise input and the chance of the 800k cap,

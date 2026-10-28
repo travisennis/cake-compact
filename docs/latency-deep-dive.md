@@ -1,9 +1,10 @@
 # Compaction latency deep dive
 
-Date: 2026-10-28. Free analysis only: no model calls, no model/profile
-changes, no session writes. The paid measurements cited here are from the
-Phase 5 pass, already authorized and reported in
-`../../research/context-compaction-phase5-results.md`.
+Date: 2026-10-28. The original analysis was free: no model calls, no
+model/profile changes, no session writes. The A1 section reports a subsequent
+authorized paid run. Phase 5 measurements are in
+`../../research/context-compaction-phase5-results.md`; A1 measurements are in
+`../../research/context-compaction-a1-results.md`.
 
 ## TL;DR
 
@@ -22,7 +23,9 @@ reasoning:
   5.6k–8.3k output tokens. The gap is hidden reasoning. In the main turns of
   the same sessions, 54–70% of output tokens are reasoning tokens.
 - The summarizer inherits the default model's `reasoning_effort = "max"`
-  unless `-summarizer-reasoning-effort` overrides it; no A/B has run yet.
+  unless `-summarizer-reasoning-effort` overrides it. A1 low-effort ran on
+  2026-10-28; it cut hidden reasoning but not visible summary length, and it
+  failed the latency/visible-output bar. No A2 has run.
 - The summarizer input is 75–83% raw tool output. User and assistant messages
   together are under 4% of the transcript.
 - Before the 2026-10-28 auto-raise, the default `-keep-tokens 20000` could
@@ -32,16 +35,42 @@ reasoning:
 
 Recommended order:
 
-1. **Low reasoning effort first.** Expected 30–60 s → 10–18 s, with no
-   visible-content change. Validate with a small paid A/B against the existing
-   Phase 5 annotation sheets. Add an output budget or length target only if the
-   A/B shows visible summary length, not hidden reasoning, is the remaining
-   cost; the current 1.6–2.7k-token summaries have not been shown to be too
-   long.
+1. **Low reasoning effort first (tested 2026-10-28).** A1 cut hidden reasoning
+   and output by 55%, but visible summaries stayed 1.7k–2.8k and latency was
+   16.7–33.5 s, so it failed the A1 bar. Visible length is now the remaining
+   cost. Add a structural target and bounded output cap, or go directly to
+   option B.
 2. **Evidence pack plus a deterministic reference ledger.** Expected 10–18 s →
    6–10 s, 65–80% less summary input, and *better* exact-fact coverage because
    code carries paths, commits, commands, and error text verbatim.
 3. Treat speculative summaries and core-native compaction as later options.
+
+## A1 low-reasoning result (2026-10-28)
+
+Trav reviewed the persisted `summary_usage` sample and authorized A1. Three
+real summaries plus the injection probe ran with only
+`-summarizer-reasoning-effort low`; the conditional `--max-tokens` and
+800–1000-token target were not added because the later decision defers them
+until visible length is measured. The installed wrapper selected a different
+boundary than Phase 5 at the same `-keep-tokens 20000`, so this is not a clean
+same-boundary A/B.
+
+| Session | Input | Output | Reasoning | Visible | `summary_ms` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `ec32da4e` | 145,646 | 2,755 | 1,020 | 1,735 | 16,740 |
+| `4fc697db` | 207,307 | 2,336 | 260 | 2,076 | 28,735 |
+| `26271706` | 199,703 | 2,802 | 0 | 2,802 | 33,494 |
+| injection | 538 | 517 | 194 | 323 | 5,265 |
+
+A1 cut output from 17,703 to 7,893 (-55%) and summary time from 124.0 s to
+79.0 s (-36%), but visible output stayed 1.7k–2.8k. Effective-context fidelity
+was 7/7 on all three real sessions and the injection probe passed. A1 still
+failed: two of three summaries took longer than 20 s, all three exceeded the
+800–1200 visible-token target, and two exceeded 2.5k output tokens. Visible
+summary length is now the bottleneck, not hidden reasoning. Do not run A2.
+
+Details, boundary drift, grading, and the exact source/result hashes:
+[`../../research/context-compaction-a1-results.md`](../../research/context-compaction-a1-results.md).
 
 ## Where the time goes
 
@@ -251,23 +280,23 @@ as untrusted data, and should redact common secret patterns (`sk-`, `ghp_`,
 
 ### A. Summarizer reasoning effort; output cap only if measured
 
-The output cap and length target are conditional, not committed. The visible
-summaries are already 1.6–2.7k tokens; nothing yet shows that is too long. Test
-reasoning effort first, then add a cap only if the A/B shows visible output
-length is the remaining cost.
+A1 confirmed that visible output length is now the remaining cost: low
+effort cut hidden reasoning but left the visible summary at 1.7–2.8k tokens.
+The target and cap are now justified; implement them with a fidelity check.
 
 Add:
 
 - `-summarizer-reasoning-effort` (pass `--reasoning-effort` to the summary
-  child). Start with `low`; test `none` as a second arm. `--reasoning-budget`
-  is an alternative if the provider honors it.
-- If, and only if, the A/B shows visible output length is the remaining cost:
-  - `-summary-max-tokens` (pass `--max-tokens`). Use ~4096 as a safety net, not
-    as the primary length control. Detect a token-limit termination instead of
-    silently accepting a truncated summary.
-  - `-summary-target-tokens` (default ~1000) and a prompt instruction with a
-    structural budget, e.g. "At most 12 bullets, one line each, 25 words max;
-    target 800–1000 tokens; do not restate the historical summary."
+  child). `low` was tested in A1 and is not sufficient. `none` could only
+  remove the remaining 1.3k reasoning tokens and would not shorten the visible
+  summary; do not run A2 as the next step.
+- `-summary-max-tokens` (pass `--max-tokens`). Use ~4096 as a safety net, not
+  as the primary length control; it would not bind A1's 2.3–2.8k outputs.
+  Detect a token-limit termination instead of silently accepting a truncated
+  summary.
+- `-summary-target-tokens` (default ~1000) and a prompt instruction with a
+  structural budget, e.g. "At most 12 bullets, one line each, 25 words max;
+  target 800–1000 tokens; do not restate the historical summary."
 - A dedicated summary profile via `-summarizer-profile`: same fast model,
   `reasoning_effort = "low"` or `"none"`, and a lower temperature such as 0.2.
   Keep it separate from the turn model. Do not switch to a different model
@@ -278,9 +307,9 @@ Add:
   2026-10-28; clamped at zero).
 
 Why it works: hidden reasoning is not part of the visible summary, so removing
-it does not directly remove content. The visible summary is already 1.6–2.7k
-tokens; a 1k target is a real cut, so this needs the A/B and preferably the
-ledger from option B.
+it does not directly remove content. A1 confirmed this: the visible summary
+stayed at 1.7–2.8k tokens even after reasoning fell. A 1k target is a real cut,
+so it needs a fidelity check and preferably the ledger from option B.
 
 Expected: output drops from 5.6–8.3k to ~1.5–2.5k tokens. At 6.06 ms/token,
 that is 25–40 s saved per compaction. Input unchanged.
@@ -424,15 +453,17 @@ core change. F is a fallback if A and B still leave more than ~15 s.
 
 ## Paid A/B plan (spend-gated)
 
-No calls are authorized by this document. If Trav approves, use the existing
-Phase 5 sessions and annotation sheets:
+Status: A1 was authorized by Trav and executed on 2026-10-28. It failed the
+latency/visible-output criteria, so A2 was not run. Further arms remain
+spend-gated.
 
-1. **Arm A1**: `--reasoning-effort low`, `--max-tokens 4096`, target 800–1000
-   visible tokens, same `-keep-tokens` and boundary as Phase 5.
-   Sessions: `ec32da4e` (126k input), `4fc697db` (178k), `26271706` (196k).
-   Cost: ~500k input, ~6k output, three summaries.
+1. **Arm A1 (executed 2026-10-28)**: low reasoning effort only; the conditional
+   `--max-tokens 4096` and 800–1000-token target were not implemented. Same
+   `-keep-tokens 20000` target as Phase 5, but the current wrapper selected a
+   different boundary (and 1.8–16.4% more input). Results:
+   [`../../research/context-compaction-a1-results.md`](../../research/context-compaction-a1-results.md).
 2. **Arm A2** (only if A1 passes): `--reasoning-effort none`, same sessions or
-   a subset. Another ~500k input if all three.
+   a subset. Another ~500k input if all three. **Not run: A1 did not pass.**
 3. **Injection probe**: rerun the 620-input synthetic probe with the new prompt;
    confirm the summary still treats tool output as data.
 4. **Grading**: summary-only facts from each sheet; effective context is the
@@ -445,8 +476,10 @@ Phase 5 sessions and annotation sheets:
    under 2.5k.
 
 This is much cheaper than Phase 5: one arm is ~0.5M input and no follow-up
-turns. If A1 passes, consider a second arm on one session to test `none` before
-choosing the default.
+turns. A1 used 552,656 real-session input and 7,893 output; no A2 was run.
+The next useful test is a shorter visible summary, either with a structural
+target/cap or the evidence pack from option B. Pin the wrapper or record a plan
+fingerprint so the next arm is same-boundary.
 
 For B, the A/B can use the same three sessions with the evidence pack; its
 input is expected to be 60–100k per session, so a three-session arm is roughly
@@ -488,9 +521,12 @@ Still additive and free:
 
 ## Open decisions for Trav
 
-1. After Trav reviews the new `summary_usage` numbers, authorize the A1 paid
-   A/B (~0.5M input, three summaries) against the Phase 5 annotations?
-2. If A1 passes, should `low` be the summarizer default, or stay opt-in?
+1. A1 was executed on 2026-10-28 and failed the latency/visible-output bar.
+   Authorize the next arm: a structural target/cap, or option B? Recommend B,
+   with a structural target, and pin the boundary before spending.
+2. Should `low` be the summarizer default, or stay opt-in? A1 shows it cuts
+   latency but does not reach the bar; recommend keeping it opt-in until the
+   next arm lands.
 3. Approve the narrative + deterministic-ledger summary shape for B? It changes
    what a checkpoint summary looks like, but it should improve exact-fact
    fidelity.
@@ -500,6 +536,8 @@ Still additive and free:
 5. Should `run` default the summarizer to the turn's model/profile, or keep the
    separate `-summarizer-*` controls? Recommend keeping them separate for cost
    control.
+6. Add a boundary/pin or plan fingerprint to the next paid arm? Recommend yes;
+   A1's boundary moved 1.8–16.4% in input from Phase 5 at the same keep.
 
 ## Reproduction notes
 

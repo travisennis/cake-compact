@@ -443,8 +443,9 @@ is reported as success; otherwise the source file is left byte-stable.
   pinned request and any indivisible item stay whole, so the retained estimate
   can exceed it. Cake enforces only that the append reduces the estimate.
 - The summary is one model call over the retired prefix. There is no batching,
-  no bounded multi-request summarization, and no real-model quality
-  qualification. The wrapper raises `-keep-tokens` to fit the
+  no bounded multi-request summarization, and no full real-model quality
+  qualification. A1 is a three-session latency/fidelity check, not the
+  qualification gate. The wrapper raises `-keep-tokens` to fit the
   800,000-character transcript cap; if even retaining the whole session leaves
   no nonempty prefix, it refuses compaction before the model call rather than
   truncating content.
@@ -453,11 +454,15 @@ is reported as success; otherwise the source file is left byte-stable.
   (`reasoning_text`) are currently omitted; no test pins that choice. See
   [docs/latency-deep-dive.md](docs/latency-deep-dive.md#reasoning-is-currently-dropped).
 - The summarizer is an LLM reading untrusted transcript content. Prompt
-  injection, factual fidelity, and summary quality are not evaluated; this is
-  exactly the gap Cake's separate qualification milestone exists to close.
+  injection, factual fidelity, and summary quality are not fully evaluated;
+  A1 covered three Phase 5 sessions and the synthetic injection fixture, not
+  the full qualification corpus. This is exactly the gap Cake's separate
+  qualification milestone exists to close.
 - Cake's task accounting does not include the summarizer's usage;
-  `summary_usage` reports it separately. Use a cheap `-summarizer-model` and a
-  low `-summarizer-reasoning-effort` while experimenting.
+  `summary_usage` reports it separately. A1 showed that
+  `-summarizer-reasoning-effort low` cuts hidden reasoning but not visible
+  summary length; use it while experimenting, but do not treat it as a latency
+  fix.
 - The default summarizer uses user-level settings, not the project's
   `.cake/settings.toml`: it runs in a temporary directory so project hooks,
   AGENTS.md, skills, and tools cannot affect the summary. Pass
