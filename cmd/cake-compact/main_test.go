@@ -708,7 +708,7 @@ func TestPrintCompactionResultShowsSummaryUsage(t *testing.T) {
 		CheckpointID:  "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
 		Boundary:      7,
 		SessionFile:   "/tmp/session.jsonl",
-		SummaryUsage:  &cakecli.Usage{InputTokens: 1200, OutputTokens: 300, TotalTokens: 1500},
+		SummaryUsage:  &cakecli.Usage{InputTokens: 1200, CachedTokens: 900, OutputTokens: 300, ReasoningTokens: 180, SummaryVisibleTokens: 120, TotalTokens: 1500},
 		SummaryTimeMs: 8420,
 	}
 	code, stdout, _ := captureOutput(t, func() int { return printCompactionResult(result, false) })
@@ -717,7 +717,7 @@ func TestPrintCompactionResultShowsSummaryUsage(t *testing.T) {
 	}
 	for _, want := range []string{
 		"input: 90000 -> 42 estimated tokens (measured_usage)",
-		"summary: 1200 in / 300 out tokens in 8.42s",
+		"summary: 1200 in / 300 out tokens (900 cached, 180 reasoning, 120 visible) in 8.42s",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout missing %q:\n%s", want, stdout)

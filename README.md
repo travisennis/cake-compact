@@ -263,7 +263,10 @@ Every command accepts `-json`.
   "summary_chars": 77,
   "summary_usage": {
     "input_tokens": 1200,
+    "cached_tokens": 900,
     "output_tokens": 300,
+    "reasoning_tokens": 180,
+    "summary_visible_tokens": 120,
     "total_tokens": 1500
   },
   "summary_time_ms": 8420,
@@ -296,13 +299,29 @@ Every command accepts `-json`.
 | `prefix_items` / `retained_items` | Planned item counts on each side of the boundary. |
 | `retained_count` | Retained records Cake persisted (same as `retained_items` on success). |
 | `summary_chars` / `transcript_chars` | Sizes used for the summary call. |
-| `summary_usage` | The summarizer's provider-reported tokens. Absent when the summarizer is a file or command, or the provider reported none. |
+| `summary_usage` | The summarizer's provider-reported tokens, including cached input, hidden reasoning, and visible output. Absent when the summarizer is a file or command, or the provider reported none. |
 | `summary_time_ms` | Wall time of the summary stage, including a summary-file read or command/model call. Present when nonzero; kept for compatibility. |
 | `timings` | Stage wall times in whole milliseconds. See [Stage timing](#stage-timing). |
 
 On a non-compaction result, `compacted` is `false` and `reason` says why;
 `session_id`, `session_file`, `checkpoint_id`, and `boundary` are absent. Use
 `source_session_id` as the session to resume.
+
+### Summary usage
+
+When the default Cake summarizer reports usage, `summary_usage` flattens the
+provider's detail objects:
+
+- `cached_tokens` is the portion of `input_tokens` served from the provider
+  cache. It is a subset of the input, not an additional charge.
+- `reasoning_tokens` is the portion of `output_tokens` spent on hidden
+  reasoning. It is a subset of the output, not a separate response.
+- `summary_visible_tokens` is `output_tokens - reasoning_tokens`, clamped to
+  zero. This is the token budget left for the summary text.
+
+Missing detail fields count as zero. The whole `summary_usage` object is absent
+when a file or command summarizer produced the summary, or when the provider
+reported no usage.
 
 ### Stage timing
 
@@ -428,9 +447,9 @@ is reported as success; otherwise the source file is left byte-stable.
 - The summarizer is an LLM reading untrusted transcript content. Prompt
   injection, factual fidelity, and summary quality are not evaluated; this is
   exactly the gap Cake's separate qualification milestone exists to close.
-- Summary usage is invisible to Cake's task accounting. Use a cheap
-  `-summarizer-model` and a low `-summarizer-reasoning-effort` while
-  experimenting.
+- Cake's task accounting does not include the summarizer's usage;
+  `summary_usage` reports it separately. Use a cheap `-summarizer-model` and a
+  low `-summarizer-reasoning-effort` while experimenting.
 - The default summarizer uses user-level settings, not the project's
   `.cake/settings.toml`: it runs in a temporary directory so project hooks,
   AGENTS.md, skills, and tools cannot affect the summary. Pass
@@ -455,6 +474,13 @@ is reported as success; otherwise the source file is left byte-stable.
 - `cake-compact version` reads `runtime/debug.ReadBuildInfo` and prints the
   embedded `vcs.revision` and `vcs.time`, with `(modified)` for a dirty build;
   table tests cover present, modified, and absent metadata. No model call.
+- Summary usage details are covered offline: nested provider
+  `input_tokens_details.cached_tokens` and
+  `output_tokens_details.reasoning_tokens` are flattened into `summary_usage`,
+  flat documents read back, missing details count as zero, and
+  `summary_visible_tokens` is clamped when reasoning exceeds output. The
+  compact result JSON and the human summary line are both asserted. No model
+  call.
 - Summarizer runtime context is covered offline: a fake child proves the
   default invocation passes `--no-runtime-context`; a binary whose `--help`
   lacks the flag fails with the upgrade message before a second invocation and

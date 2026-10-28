@@ -1019,6 +1019,7 @@ func (c *Compactor) summarizeForResult(ctx context.Context, plan *Plan, result *
 	elapsed := c.Now().Sub(started)
 	result.SummaryTimeMs = elapsed.Milliseconds()
 	result.ensureTimings().SummaryMs = stageMillis(elapsed)
+	usage.SummaryVisibleTokens = usage.VisibleTokens()
 	if usage != (cakecli.Usage{}) {
 		result.SummaryUsage = &usage
 	}

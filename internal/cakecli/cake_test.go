@@ -109,7 +109,7 @@ func TestSummarizeUsesStdinAndParsesResult(t *testing.T) {
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		t.Skip("sh is unavailable")
 	}
-	script := writeScript(t, `cat >/dev/null; printf '{"session_id":"11111111-1111-4111-8111-111111111111","result":"the summary","usage":{"input_tokens":120,"output_tokens":30,"total_tokens":150}}'`+"\n")
+	script := writeScript(t, `cat >/dev/null; printf '{"session_id":"11111111-1111-4111-8111-111111111111","result":"the summary","usage":{"input_tokens":120,"input_tokens_details":{"cached_tokens":80},"output_tokens":30,"output_tokens_details":{"reasoning_tokens":22},"total_tokens":150}}'`+"\n")
 	summary, usage, err := Summarize(context.Background(), SummaryOptions{
 		Binary:       script,
 		SystemPrompt: "summarize",
@@ -121,9 +121,83 @@ func TestSummarizeUsesStdinAndParsesResult(t *testing.T) {
 	if summary != "the summary" {
 		t.Fatalf("summary = %q", summary)
 	}
-	want := Usage{InputTokens: 120, OutputTokens: 30, TotalTokens: 150}
+	want := Usage{
+		InputTokens:          120,
+		CachedTokens:         80,
+		OutputTokens:         30,
+		ReasoningTokens:      22,
+		SummaryVisibleTokens: 8,
+		TotalTokens:          150,
+	}
 	if usage != want {
 		t.Fatalf("usage = %+v, want %+v", usage, want)
+	}
+}
+
+func TestUsageUnmarshalFlattensProviderDetails(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want Usage
+	}{
+		{
+			name: "provider details",
+			raw:  `{"input_tokens":120,"input_tokens_details":{"cached_tokens":80,"cache_write_tokens":4},"output_tokens":30,"output_tokens_details":{"reasoning_tokens":22},"total_tokens":150}`,
+			want: Usage{InputTokens: 120, CachedTokens: 80, OutputTokens: 30, ReasoningTokens: 22, SummaryVisibleTokens: 8, TotalTokens: 150},
+		},
+		{
+			name: "flat fields",
+			raw:  `{"input_tokens":10,"cached_tokens":4,"output_tokens":6,"reasoning_tokens":2,"total_tokens":16}`,
+			want: Usage{InputTokens: 10, CachedTokens: 4, OutputTokens: 6, ReasoningTokens: 2, SummaryVisibleTokens: 4, TotalTokens: 16},
+		},
+		{
+			name: "missing details",
+			raw:  `{"input_tokens":10,"output_tokens":6,"total_tokens":16}`,
+			want: Usage{InputTokens: 10, OutputTokens: 6, SummaryVisibleTokens: 6, TotalTokens: 16},
+		},
+		{
+			name: "reasoning exceeds output",
+			raw:  `{"output_tokens":3,"output_tokens_details":{"reasoning_tokens":5}}`,
+			want: Usage{OutputTokens: 3, ReasoningTokens: 5, SummaryVisibleTokens: 0},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Usage
+			if err := json.Unmarshal([]byte(tt.raw), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("usage = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUsageMarshalsSummaryDetails(t *testing.T) {
+	usage := Usage{
+		InputTokens:          120,
+		CachedTokens:         80,
+		OutputTokens:         30,
+		ReasoningTokens:      22,
+		SummaryVisibleTokens: 8,
+		TotalTokens:          150,
+	}
+	raw, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"input_tokens", "cached_tokens", "output_tokens", "reasoning_tokens", "summary_visible_tokens", "total_tokens"} {
+		if _, ok := document[key]; !ok {
+			t.Fatalf("document has no %s: %s", key, raw)
+		}
+	}
+	if document["summary_visible_tokens"] != float64(8) {
+		t.Fatalf("summary_visible_tokens = %v, want 8", document["summary_visible_tokens"])
 	}
 }
 

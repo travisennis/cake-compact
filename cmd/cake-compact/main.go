@@ -754,7 +754,13 @@ func printCompactionResult(result *compact.Result, jsonOut bool) int {
 		}
 		fmt.Printf("  input: %d -> %d estimated tokens (%s)\n", result.BeforeTokens, result.AfterTokens, result.Basis)
 		if result.SummaryUsage != nil {
-			fmt.Printf("  summary: %d in / %d out tokens", result.SummaryUsage.InputTokens, result.SummaryUsage.OutputTokens)
+			fmt.Printf("  summary: %d in / %d out tokens (%d cached, %d reasoning, %d visible)",
+				result.SummaryUsage.InputTokens,
+				result.SummaryUsage.OutputTokens,
+				result.SummaryUsage.CachedTokens,
+				result.SummaryUsage.ReasoningTokens,
+				result.SummaryUsage.SummaryVisibleTokens,
+			)
 			if result.SummaryTimeMs > 0 {
 				fmt.Printf(" in %s", time.Duration(result.SummaryTimeMs)*time.Millisecond)
 			}

@@ -190,11 +190,67 @@ type SummaryOptions struct {
 }
 
 // Usage is the provider-reported token usage for one Cake invocation. A zero
-// value means the response carried no usage, not zero tokens.
+// value means the response carried no usage, not zero tokens. CachedTokens is
+// the subset of InputTokens served from the provider cache, and
+// ReasoningTokens is the subset of OutputTokens spent on hidden reasoning.
+// SummaryVisibleTokens is OutputTokens minus ReasoningTokens.
 type Usage struct {
-	InputTokens  uint64 `json:"input_tokens"`
-	OutputTokens uint64 `json:"output_tokens"`
-	TotalTokens  uint64 `json:"total_tokens"`
+	InputTokens          uint64 `json:"input_tokens"`
+	CachedTokens         uint64 `json:"cached_tokens"`
+	OutputTokens         uint64 `json:"output_tokens"`
+	ReasoningTokens      uint64 `json:"reasoning_tokens"`
+	SummaryVisibleTokens uint64 `json:"summary_visible_tokens"`
+	TotalTokens          uint64 `json:"total_tokens"`
+}
+
+// VisibleTokens returns the output tokens that are not hidden reasoning. A
+// provider that reports more reasoning than output is clamped to zero rather
+// than underflowing.
+func (u Usage) VisibleTokens() uint64 {
+	if u.ReasoningTokens >= u.OutputTokens {
+		return 0
+	}
+	return u.OutputTokens - u.ReasoningTokens
+}
+
+// UnmarshalJSON flattens Cake's provider-shaped usage object. The provider
+// details are nested as input_tokens_details.cached_tokens and
+// output_tokens_details.reasoning_tokens. Flat cached_tokens and
+// reasoning_tokens are also accepted so this document can be read back.
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		InputTokens        uint64 `json:"input_tokens"`
+		InputTokensDetails *struct {
+			CachedTokens uint64 `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
+		CachedTokens        uint64 `json:"cached_tokens"`
+		OutputTokens        uint64 `json:"output_tokens"`
+		OutputTokensDetails *struct {
+			ReasoningTokens uint64 `json:"reasoning_tokens"`
+		} `json:"output_tokens_details"`
+		ReasoningTokens uint64 `json:"reasoning_tokens"`
+		TotalTokens     uint64 `json:"total_tokens"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	cached := wire.CachedTokens
+	if wire.InputTokensDetails != nil {
+		cached = wire.InputTokensDetails.CachedTokens
+	}
+	reasoning := wire.ReasoningTokens
+	if wire.OutputTokensDetails != nil {
+		reasoning = wire.OutputTokensDetails.ReasoningTokens
+	}
+	*u = Usage{
+		InputTokens:     wire.InputTokens,
+		CachedTokens:    cached,
+		OutputTokens:    wire.OutputTokens,
+		ReasoningTokens: reasoning,
+		TotalTokens:     wire.TotalTokens,
+	}
+	u.SummaryVisibleTokens = u.VisibleTokens()
+	return nil
 }
 
 // ErrNoRuntimeContextUnavailable marks a Cake binary without the root

@@ -36,11 +36,15 @@ unchanged. Implemented:
 ## Qualification instrumentation (done)
 
 `compact -json` and `run -json` report the summarizer's provider usage and wall
-time as `summary_usage {input_tokens, output_tokens, total_tokens}` and
-`summary_time_ms`, so Phase 5 can measure cost from the result document. A file
+time as `summary_usage` and `summary_time_ms`, so Phase 5 can measure cost from
+the result document. `summary_usage` reports `input_tokens`, `cached_tokens`,
+`output_tokens`, `reasoning_tokens`, `summary_visible_tokens`, and
+`total_tokens`. Cached tokens are a subset of input, reasoning is a subset of
+output, and visible tokens are output minus reasoning (clamped at zero). A file
 or command summarizer reports no usage and omits the field; a provider response
 whose usage is missing or malformed leaves it zero rather than failing the
-summary.
+summary. Tests cover nested provider details, flat read-back, missing details,
+and reasoning greater than output.
 
 ## Bounded single-request tail selection (done)
 
@@ -149,11 +153,12 @@ Recommended order:
    `-summarizer-reasoning-effort` is implemented. Do not add
    `-summary-max-tokens` or a fixed summary length target yet: visible summary
    length has not been shown to be the problem, and a target would be arbitrary.
-   Capture `reasoning_tokens` and `cached_tokens` in `summary_usage`; run a paid
-   A/B on Phase 5 sessions (A1: three summaries, ~0.5M input; no follow-up
-   turns) and grade against the annotation sheets. If A1 shows visible output
-   length is the remaining bottleneck, add a bounded output safety cap then.
-   Expected 30–60 s -> 10–18 s.
+   `summary_usage` now captures `reasoning_tokens`, `cached_tokens`, and
+   `summary_visible_tokens`; A1 is held until Trav reviews those numbers. Then
+   run the paid A/B on Phase 5 sessions (three summaries, ~0.5M input; no
+   follow-up turns) and grade against the annotation sheets. If A1 shows visible
+   output length is the remaining bottleneck, add a bounded output safety cap
+   then. Expected 30–60 s -> 10–18 s.
 2. Build an evidence pack (all messages, Edit/Write args, commands) plus a
    deterministic exact-reference ledger; the model writes only the narrative.
    Expected 10–18 s -> 6–10 s, 65–80% less input, equal or better exact-fact

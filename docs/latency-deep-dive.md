@@ -21,8 +21,8 @@ reasoning:
 - Visible summaries are only ~1.6k–2.7k tokens, but the provider reported
   5.6k–8.3k output tokens. The gap is hidden reasoning. In the main turns of
   the same sessions, 54–70% of output tokens are reasoning tokens.
-- The summarizer inherits the default model's `reasoning_effort = "max"`; it
-  never passes `--reasoning-effort`.
+- The summarizer inherits the default model's `reasoning_effort = "max"`
+  unless `-summarizer-reasoning-effort` overrides it; no A/B has run yet.
 - The summarizer input is 75–83% raw tool output. User and assistant messages
   together are under 4% of the transcript.
 - Before the 2026-10-28 auto-raise, the default `-keep-tokens 20000` could
@@ -70,9 +70,9 @@ Phase 5's measured summary calls:
 | `7801e444` | 159,530 | 5,617 | 37,050 | 7,884 | 1,971 | ~3,646 |
 | injection probe | 620 | 698 | 4,788 | 1,389 | 347 | ~351 |
 
-The visible-token split uses ~4 characters/token and is an estimate. The exact
-split needs the provider's `reasoning_tokens`, which `cake-compact` currently
-discards (see Instrumentation below). The main-turn data is exact:
+The visible-token split uses ~4 characters/token and is an estimate until the
+provider reports `reasoning_tokens`; `summary_usage` now carries the exact
+value (see Instrumentation below). The main-turn data is exact:
 
 | Session | Output tokens (all turns) | Reasoning tokens | Reasoning share |
 | --- | ---: | ---: | ---: |
@@ -203,11 +203,11 @@ Main-turn input is 95–99% cached (`input_tokens_details.cached_tokens`;
 97.6% across the five Phase 5 sessions). The
 summary child starts a fresh tool-less session with a different system prompt
 and a rendered transcript, so it is almost certainly a cold prompt. The
-recorded data cannot prove that: `cakecli.Usage` drops `cached_tokens`. Phase
-5's 865k summary input tokens are at full price as far as the evidence shows;
-capturing `cached_tokens` in the next run will settle it. This is why the
-summary is 61% of the compacted path's input even though the follow-up turn
-reuses most of its prefix.
+recorded data cannot prove that: `cakecli.Usage` dropped `cached_tokens` when
+Phase 5 ran. The field is now captured, so the next paid run will settle it.
+Phase 5's 865k summary input tokens are at full price as far as the evidence
+shows. This is why the summary is 61% of the compacted path's input even
+though the follow-up turn reuses most of its prefix.
 
 A core-native compactor could reuse the session prefix cache; an external
 wrapper cannot do it cleanly without reconstructing Cake's exact system prompt,
@@ -273,8 +273,9 @@ Add:
   Keep it separate from the turn model. Do not switch to a different model
   without an A/B and explicit approval. An output cap belongs here only if the
   A/B justifies one.
-- Capture `reasoning_tokens` and `cached_tokens` from the child's usage and
-  report `summary_visible_tokens = output_tokens - reasoning_tokens`.
+- `summary_usage` now reports `reasoning_tokens`, `cached_tokens`, and
+  `summary_visible_tokens = output_tokens - reasoning_tokens` (implemented
+  2026-10-28; clamped at zero).
 
 Why it works: hidden reasoning is not part of the visible summary, so removing
 it does not directly remove content. The visible summary is already 1.6–2.7k
@@ -454,11 +455,15 @@ first; only remove the raw excerpt if fidelity holds.
 
 ## Instrumentation to add before the A/B
 
-These are free and additive:
+Implemented on 2026-10-28 and free:
 
-- `summary_usage.reasoning_tokens` and `summary_usage.cached_tokens` from the
-  child's `usage` object. `cakecli.Usage` currently drops both.
-- `summary_visible_tokens = output_tokens - reasoning_tokens`.
+- `summary_usage.reasoning_tokens`, `summary_usage.cached_tokens`, and
+  `summary_visible_tokens = output_tokens - reasoning_tokens` from the child's
+  `usage` object. `cakecli.Usage` now reads both detail objects and flattens
+  them into the result document.
+
+Still additive and free:
+
 - `summary_target_tokens`, `summary_max_tokens`, and the summarizer model /
   reasoning effort in the result document.
 - `transcript_mode`, `transcript_items`, `transcript_chars`, and
@@ -480,8 +485,8 @@ These are free and additive:
 
 ## Open decisions for Trav
 
-1. Authorize the A1 paid A/B (~0.5M input, three summaries) against the Phase 5
-   annotations?
+1. After Trav reviews the new `summary_usage` numbers, authorize the A1 paid
+   A/B (~0.5M input, three summaries) against the Phase 5 annotations?
 2. If A1 passes, should `low` be the summarizer default, or stay opt-in?
 3. Approve the narrative + deterministic-ledger summary shape for B? It changes
    what a checkpoint summary looks like, but it should improve exact-fact

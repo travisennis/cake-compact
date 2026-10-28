@@ -819,7 +819,14 @@ func TestCompactReportsSummaryUsageAndWallTime(t *testing.T) {
 		ticks++
 		return time.Unix(0, 0).Add(time.Duration(ticks) * 5 * time.Millisecond)
 	}
-	wantUsage := cakecli.Usage{InputTokens: 1200, OutputTokens: 300, TotalTokens: 1500}
+	wantUsage := cakecli.Usage{
+		InputTokens:          1200,
+		CachedTokens:         900,
+		OutputTokens:         300,
+		ReasoningTokens:      180,
+		SummaryVisibleTokens: 120,
+		TotalTokens:          1500,
+	}
 	compactor := &Compactor{
 		Mode:    ModeInPlace,
 		DataDir: dataDir,
@@ -827,7 +834,7 @@ func TestCompactReportsSummaryUsageAndWallTime(t *testing.T) {
 		Options: Options{Force: true, KeepTokens: 10, Trigger: "manual"},
 		Summarizer: usageSummarizer{
 			text:  "the user asked about the retry policy and changed the timeout to 60 seconds",
-			usage: wantUsage,
+			usage: cakecli.Usage{InputTokens: 1200, CachedTokens: 900, OutputTokens: 300, ReasoningTokens: 180, TotalTokens: 1500},
 		},
 		Now:   clock,
 		NewID: NewUUID,
@@ -859,6 +866,18 @@ func TestCompactReportsSummaryUsageAndWallTime(t *testing.T) {
 		if _, ok := document[key]; !ok {
 			t.Fatalf("document has no %s: %s", key, raw)
 		}
+	}
+	summaryUsage, ok := document["summary_usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("summary_usage is not an object: %s", raw)
+	}
+	for _, key := range []string{"input_tokens", "cached_tokens", "output_tokens", "reasoning_tokens", "summary_visible_tokens", "total_tokens"} {
+		if _, ok := summaryUsage[key]; !ok {
+			t.Fatalf("summary_usage has no %s: %s", key, raw)
+		}
+	}
+	if summaryUsage["summary_visible_tokens"] != float64(120) {
+		t.Fatalf("summary_visible_tokens = %v, want 120: %s", summaryUsage["summary_visible_tokens"], raw)
 	}
 }
 
