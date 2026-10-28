@@ -54,11 +54,11 @@ measurement survives. Both commit paths copy `summary_usage` and
 `summary_time_ms` into the `compaction` record: in place through Cake's
 checkpoint payload, and in fork mode through the local checkpoint builder.
 Cake accepts the fields as optional additive payload/record fields, so a file
-or command summarizer still omits them. The in-place preflight reads the
-checkpoint help text and refuses a build that does not advertise both fields,
-so an older Cake cannot spend a turn or summary call before failing. Tests
-cover the protocol payload, the capability probe, the persisted in-place
-checkpoint, and the fork record.
+or command summarizer still omits `summary_usage`; `summary_time_ms` is
+recorded for any summary path. The preflight reads the checkpoint help text
+and refuses a build that does not advertise both fields, before either commit
+path can spend a turn or summary call. Tests cover the protocol payload, the
+capability probe, the persisted in-place checkpoint, and the fork record.
 
 ## Bounded single-request tail selection (done)
 

@@ -461,7 +461,7 @@ Implemented on 2026-10-28 and free:
   `summary_visible_tokens = output_tokens - reasoning_tokens` from the child's
   `usage` object. `cakecli.Usage` now reads both detail objects and flattens
   them into the result document.
-- The same `summary_usage` and `summary_time_ms` are copied into the
+- Any `summary_usage` and `summary_time_ms` measurements are copied into the
   `compaction` checkpoint record on both in-place and fork commits, so the
   measurement persists without saving the `-json` result.
 

@@ -44,13 +44,21 @@ func TestCheckpointAvailable(t *testing.T) {
 }
 
 func TestCheckpointAvailableRejectsAHelpWithoutMeasurementFields(t *testing.T) {
-	old := writeScript(t, "printf 'Append one checkpoint\\n'\n")
-	err := CheckpointAvailable(context.Background(), old)
-	if err == nil || !errors.Is(err, ErrCheckpointUnavailable) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "does not accept summary_usage") {
-		t.Fatalf("unclear error: %v", err)
+	for name, help := range map[string]string{
+		"neither":         "Append one checkpoint",
+		"summary_usage":   "Append one checkpoint; summary_usage is accepted",
+		"summary_time_ms": "Append one checkpoint; summary_time_ms is accepted",
+	} {
+		t.Run(name, func(t *testing.T) {
+			old := writeScript(t, "printf '"+help+"\\n'\n")
+			err := CheckpointAvailable(context.Background(), old)
+			if err == nil || !errors.Is(err, ErrCheckpointUnavailable) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(err.Error(), "does not accept") {
+				t.Fatalf("unclear error: %v", err)
+			}
+		})
 	}
 }
 

@@ -458,6 +458,7 @@ func TestSingleRequestCheckpointProjectsThePinnedRequest(t *testing.T) {
 	compactor := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{
 			ThresholdTokens: 60000,
 			KeepTokens:      10000,
@@ -577,6 +578,11 @@ func TestBuildCheckpointShape(t *testing.T) {
 			t.Fatalf("checkpoint is missing %q", key)
 		}
 	}
+	for _, key := range []string{"summary_usage", "summary_time_ms"} {
+		if _, ok := decoded[key]; ok {
+			t.Fatalf("checkpoint must omit absent %q", key)
+		}
+	}
 }
 
 func TestBuildCheckpointPersistsSummaryUsage(t *testing.T) {
@@ -649,6 +655,7 @@ func TestCompactWritesAValidatedNewSession(t *testing.T) {
 	compactor := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{
 			Force:               true,
 			KeepTokens:          10,
@@ -741,6 +748,7 @@ func TestCompactRejectsInsufficientReduction(t *testing.T) {
 	compactor := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{
 			Force:       true,
 			KeepTokens:  10,
@@ -767,6 +775,7 @@ func TestCompactingACompactedSessionUsesTheProjection(t *testing.T) {
 	first := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{Force: true, KeepTokens: 10, SummaryFile: writeSummary(t, "first summary about the retry policy")},
 		Now:     time.Now,
 		NewID:   func() (string, error) { return newID, nil },
@@ -781,6 +790,7 @@ func TestCompactingACompactedSessionUsesTheProjection(t *testing.T) {
 	second := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{Force: true, KeepTokens: 1, SummaryFile: writeSummary(t, "second summary")},
 		Now:     time.Now,
 		NewID:   func() (string, error) { return secondID, nil },
@@ -822,13 +832,30 @@ func TestRealCakeForkSessionPassesReplay(t *testing.T) {
 	}
 	dataDir := t.TempDir()
 	sourcePath := writeFixture(t, dataDir)
+	ticks := 0
+	clock := func() time.Time {
+		current := time.Unix(0, 0).Add(time.Duration(ticks) * 5 * time.Millisecond)
+		ticks++
+		return current
+	}
 	compactor := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
 		CakeBin: binary,
-		Options: Options{Force: true, KeepTokens: 10, SummaryFile: writeSummary(t, "summary for replay validation")},
-		Now:     time.Now,
-		NewID:   func() (string, error) { return newID, nil },
+		Options: Options{Force: true, KeepTokens: 10},
+		Summarizer: usageSummarizer{
+			text: "summary for replay validation",
+			usage: cakecli.Usage{
+				InputTokens:          1457,
+				CachedTokens:         0,
+				OutputTokens:         779,
+				ReasoningTokens:      291,
+				SummaryVisibleTokens: 488,
+				TotalTokens:          2236,
+			},
+		},
+		Now:   clock,
+		NewID: func() (string, error) { return newID, nil },
 	}
 	result, err := compactor.Compact(context.Background(), sourcePath)
 	if err != nil || !result.Compacted {
@@ -840,6 +867,11 @@ func TestRealCakeForkSessionPassesReplay(t *testing.T) {
 	}
 	if !strings.Contains(string(output), `"type":"compaction"`) {
 		t.Fatalf("replay did not emit the checkpoint: %s", output)
+	}
+	for _, key := range []string{"summary_usage", "summary_time_ms"} {
+		if !strings.Contains(string(output), `"`+key+`"`) {
+			t.Fatalf("replay checkpoint is missing %s: %s", key, output)
+		}
 	}
 }
 
@@ -970,6 +1002,23 @@ func TestCompactOmitsUsageWithoutAProvider(t *testing.T) {
 	if result.SummaryUsage != nil {
 		t.Fatalf("summary usage = %+v, want nil", result.SummaryUsage)
 	}
+
+	persisted, err := session.Load(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointIndex := persisted.LatestCheckpointIndex()
+	if checkpointIndex < 0 {
+		t.Fatal("no checkpoint was persisted")
+	}
+	checkpoint := persisted.Records[checkpointIndex].Checkpoint
+	if checkpoint.SummaryUsage != nil {
+		t.Fatalf("persisted summary usage = %+v, want nil", checkpoint.SummaryUsage)
+	}
+	if checkpoint.SummaryTimeMs != result.SummaryTimeMs {
+		t.Fatalf("persisted summary time = %d, want %d", checkpoint.SummaryTimeMs, result.SummaryTimeMs)
+	}
+
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)

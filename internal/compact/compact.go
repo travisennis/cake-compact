@@ -682,14 +682,13 @@ func (c *Compactor) Compact(ctx context.Context, sourcePath string) (result *Res
 		return result, nil
 	}
 
-	if c.Mode == ModeInPlace {
-		// Fail before spending a model call on a binary that cannot commit.
-		preflightStarted := c.Now()
-		if err := c.requireCheckpointVerb(ctx); err != nil {
-			return nil, err
-		}
-		result.Timings.PreflightMs = stageMillis(c.Now().Sub(preflightStarted))
+	// Both commit paths write the measurement fields, and the fork path also
+	// needs a reader that accepts them. Fail before spending a summary call.
+	preflightStarted := c.Now()
+	if err := c.requireCheckpointFields(ctx); err != nil {
+		return nil, err
 	}
+	result.Timings.PreflightMs = stageMillis(c.Now().Sub(preflightStarted))
 
 	summary, err := c.summarizeForResult(ctx, plan, result)
 	if err != nil {
@@ -726,11 +725,11 @@ func (c *Compactor) Compact(ctx context.Context, sourcePath string) (result *Res
 	return result, err
 }
 
-// requireCheckpointVerb turns a Cake build without the checkpoint verb into a
-// clear failure. It never falls back to writing session JSONL.
-func (c *Compactor) requireCheckpointVerb(ctx context.Context) error {
+// requireCheckpointFields turns a Cake build without the measurement fields
+// into a clear failure. It never falls back to writing session JSONL.
+func (c *Compactor) requireCheckpointFields(ctx context.Context) error {
 	if c.CakeBin == "" {
-		return fmt.Errorf("in-place compaction requires a cake binary")
+		return fmt.Errorf("compaction requires a cake binary")
 	}
 	return cakecli.CheckpointAvailable(ctx, c.CakeBin)
 }
@@ -1019,8 +1018,9 @@ func (c *Compactor) summarizeForResult(ctx context.Context, plan *Plan, result *
 	started := c.Now()
 	summary, usage, transcriptChars, err := c.summarize(ctx, plan)
 	elapsed := c.Now().Sub(started)
-	result.SummaryTimeMs = elapsed.Milliseconds()
-	result.ensureTimings().SummaryMs = stageMillis(elapsed)
+	summaryMs := stageMillis(elapsed)
+	result.SummaryTimeMs = *summaryMs
+	result.ensureTimings().SummaryMs = summaryMs
 	usage.SummaryVisibleTokens = usage.VisibleTokens()
 	if usage != (cakecli.Usage{}) {
 		result.SummaryUsage = &usage

@@ -23,8 +23,8 @@ used implicitly.
   `--no-runtime-context` flag. That means the M1 `compaction` record (Cake
   commit `2d9e4c0`, PR #747), `cake sessions checkpoint` (task 127),
   `--no-runtime-context` (Cake commit `0dc7c17`, PR #761), and the measurement
-  fields added after it. `cake --version` reports `0.1.0` for all of them, so
-  the wrapper probes the verb and its help text itself.
+  fields added in Cake `a16fbde` (PR #762). `cake --version` reports `0.1.0`
+  for all of them, so the wrapper probes the verb and its help text itself.
 - Go 1.25 or newer to build.
 - macOS or Linux. The wrapper takes a shared `flock` on the source session to
   read it and uses `sh` for `-summarizer-command`.
@@ -32,10 +32,11 @@ used implicitly.
 If the binary cannot answer `cake sessions checkpoint --help`, or its help
 does not advertise `summary_usage` and `summary_time_ms`, compaction fails with
 `cake sessions checkpoint is unavailable; upgrade cake`. `run` checks this
-before starting the turn, so an unsupported binary cannot spend a model call on
-a turn whose compaction must then fail; pass `-no-compact` (turn only) to use
-an older build. There is no fallback to writing session JSONL, and `-fork` now
-writes the same measurement fields, so it also needs the newer Cake reader.
+before starting the turn for both in-place and fork commits, so an unsupported
+binary cannot spend a model call on a turn whose compaction must then fail;
+pass `-no-compact` (turn only) or `-dry-run` to use an older build. There is no
+fallback to writing session JSONL, and `-fork` writes the same measurement
+fields, so it also needs the newer Cake reader.
 
 If `cake --help` does not list `--no-runtime-context`, the default summarizer
 fails with `cake --no-runtime-context is unavailable; upgrade cake`. `run`
@@ -101,8 +102,9 @@ keep a checkpoint-aware binary for compacted sessions.
    `cake --output-format stream-json replay <new>` to validate it. A failed
    validation removes the new file. The state file moves to the new id.
 
-The wrapper never writes session JSONL itself; the in-place path relies on
-Cake's checkpoint verb, and the fork path is reached only through `-fork`.
+The in-place path never writes session JSONL itself; it relies on Cake's
+checkpoint verb. The fork path writes a new minimal session file and is reached
+only through `-fork`.
 
 ### Selection and budget
 
@@ -521,7 +523,8 @@ is reported as success; otherwise the source file is left byte-stable.
 
 ## Removing it
 
-Delete this directory. Nothing in Cake changed. Sessions that received an
-in-place checkpoint keep their raw history and the appended record; they need a
-checkpoint-aware Cake binary to resume. Sessions compacted with `-fork` can be
-deleted as ordinary session files, and the source sessions remain untouched.
+Delete this directory. The wrapper is external, so removing it leaves Cake's
+checkpoint support in place. Sessions that received a checkpoint keep their raw
+history and the appended record; they need a Cake binary that knows the
+measurement fields to resume. Sessions compacted with `-fork` can be deleted as
+ordinary session files, and the source sessions remain untouched.
