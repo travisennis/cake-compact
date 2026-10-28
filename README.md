@@ -206,7 +206,7 @@ cake-compact compact -summary-file notes.txt <session-uuid>
 cake-compact compact -summarizer-command './summarize.sh' <session-uuid>
 
 # Try a different model, profile, or reasoning effort for the summary.
-cake-compact compact -summarizer-model deepseek-flash -summarizer-reasoning-effort low <session-uuid>
+cake-compact compact -summarizer-model deepseek-flash-max -summarizer-reasoning-effort low <session-uuid>
 
 # Escape hatch: write a new minimal session instead of appending in place.
 cake-compact compact -fork -summary-file notes.txt <session-uuid>
