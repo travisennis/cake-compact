@@ -3,15 +3,24 @@ package cakecli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 func writeScript(t *testing.T, body string) string {
+	t.Helper()
+	help := `if [ "${1:-}" = "--help" ]; then
+  printf '%s\n' 'Usage: cake [OPTIONS]' '      --no-runtime-context  Omit the process-environment Developer message'
+  exit 0
+fi
+`
+	return writeCakeScript(t, help+body)
+}
+
+func writeCakeScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-cake")
 	script := "#!/bin/sh\nset -eu\n" + body
@@ -141,86 +150,74 @@ func TestSummarizeToleratesUnusableUsage(t *testing.T) {
 	}
 }
 
-func TestSanitizeSummaryDropsProcessEnvironmentFacts(t *testing.T) {
-	t.Setenv("SHELL", "/bin/zsh")
-	t.Setenv("TERM_PROGRAM", "ghostty")
-	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.Local)
-	dir := filepath.Join(t.TempDir(), "cake-compact-summary-123")
-	summary := "## Session Overview\n" +
-		"- Working directory: `" + dir + "`\n" +
-		"- Environment: macOS, aarch64, shell `/bin/zsh`, terminal ghostty, date " + now.Format("2006-01-02") + ".\n" +
-		"- The project is /tmp/project."
-
-	got := sanitizeSummary(summary, "USER:\nThe project is /tmp/project.", dir, now)
-	if strings.Contains(got, dir) || strings.Contains(got, "cake-compact-summary-") {
-		t.Fatalf("summary retained its process directory: %s", got)
-	}
-	if strings.Contains(got, "Environment:") {
-		t.Fatalf("summary retained process environment facts: %s", got)
-	}
-	if !strings.Contains(got, "The project is /tmp/project.") {
-		t.Fatalf("summary lost transcript content: %s", got)
-	}
-}
-
-func TestSanitizeSummaryKeepsEnvironmentFactsPresentInTranscript(t *testing.T) {
-	t.Setenv("SHELL", "/bin/zsh")
-	t.Setenv("TERM_PROGRAM", "ghostty")
-	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.Local)
-	summary := "Environment: " + runtime.GOOS + ", shell `/bin/zsh`."
-	transcript := "USER:\nThe host is " + runtime.GOOS + " and the shell is /bin/zsh."
-
-	got := sanitizeSummary(summary, transcript, t.TempDir(), now)
-	if got != summary {
-		t.Fatalf("summary with transcript-backed facts changed: %q", got)
-	}
-}
-
-func TestSanitizeSummaryKeepsProseThatMentionsRuntimeTerms(t *testing.T) {
-	t.Setenv("SHELL", "/bin/zsh")
-	t.Setenv("TERM_PROGRAM", "ghostty")
-	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.Local)
-	summary := "- The terminal command failed on date " + now.Format("2006-01-02") + "."
-	transcript := "USER:\nThe terminal command failed."
-
-	got := sanitizeSummary(summary, transcript, t.TempDir(), now)
-	if got != summary {
-		t.Fatalf("prose containing runtime terms changed: %q", got)
-	}
-}
-
-func TestSummarizeDropsSummarizerWorkingDirectory(t *testing.T) {
+func TestSummarizePassesNoRuntimeContext(t *testing.T) {
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		t.Skip("sh is unavailable")
 	}
-	script := writeScript(t, `cat >/dev/null; printf '{"result":"Working directory: %s\\nProject: /tmp/project"}' "$PWD"`+"\n")
+	argsPath := filepath.Join(t.TempDir(), "args")
+	script := writeScript(t, `printf '%s\n' "$@" > "`+argsPath+`"
+cat >/dev/null
+printf '{"result":"the summary"}'
+`)
 	summary, _, err := Summarize(context.Background(), SummaryOptions{
 		Binary:       script,
 		SystemPrompt: "summarize",
-		Transcript:   "USER:\nThe project is /tmp/project.",
+		Transcript:   "USER:\nhello",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(summary, "Working directory:") || strings.Contains(summary, "cake-compact-summary-") {
-		t.Fatalf("summary retained the child working directory: %q", summary)
+	if summary != "the summary" {
+		t.Fatalf("summary = %q", summary)
 	}
-	if !strings.Contains(summary, "Project: /tmp/project") {
-		t.Fatalf("summary lost transcript content: %q", summary)
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--no-runtime-context") {
+		t.Fatalf("summarizer did not pass --no-runtime-context: %s", args)
 	}
 }
 
-func TestSummarizeRejectsOnlyRuntimeMetadata(t *testing.T) {
+func TestSummarizeRequiresNoRuntimeContext(t *testing.T) {
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		t.Skip("sh is unavailable")
 	}
-	script := writeScript(t, `cat >/dev/null; printf '{"result":"Working directory: %s"}' "$PWD"`+"\n")
+	argsPath := filepath.Join(t.TempDir(), "args")
+	script := writeCakeScript(t, `printf '%s\n' "$*" >> "`+argsPath+`"
+cat >/dev/null
+printf '{"result":"the summary"}'
+`)
 	_, _, err := Summarize(context.Background(), SummaryOptions{
 		Binary:       script,
 		SystemPrompt: "summarize",
 		Transcript:   "USER:\nhello",
 	})
-	if err == nil || !strings.Contains(err.Error(), "only its own runtime metadata") {
-		t.Fatalf("error = %v, want a runtime-metadata rejection", err)
+	if !errors.Is(err, ErrNoRuntimeContextUnavailable) {
+		t.Fatalf("error = %v, want ErrNoRuntimeContextUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "upgrade cake") {
+		t.Fatalf("error does not name the upgrade: %v", err)
+	}
+	args, readErr := os.ReadFile(argsPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if got := strings.TrimSpace(string(args)); got != "--help" {
+		t.Fatalf("summarizer ran beyond the capability probe: %q", got)
+	}
+}
+
+func TestNoRuntimeContextAvailableReportsFailedHelp(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("sh is unavailable")
+	}
+	script := writeCakeScript(t, "echo 'cake: unknown flag' >&2\nexit 2\n")
+	err := NoRuntimeContextAvailable(context.Background(), script)
+	if !errors.Is(err, ErrNoRuntimeContextUnavailable) {
+		t.Fatalf("error = %v, want ErrNoRuntimeContextUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("error lost the help detail: %v", err)
 	}
 }

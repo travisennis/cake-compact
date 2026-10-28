@@ -20,12 +20,15 @@ and environment as session facts; the probe repeated the false working
 directory. Follow-up task 004 owns that defect. The real-regression full
 critical-fact probe was not run.
 
-Task 004 fixed the defect on 2026-10-27 without a model call: the summary prompt
-now declares Cake's runtime Developer message out of scope, and the returned
-summary drops lines that only restate the per-call temp path or an environment
-fact absent from the retired transcript. `summary_instruction_version` is 2.
-No live re-probe was run; the synthetic probe result above remains the only
-live recall evidence.
+Task 004 contained the defect on 2026-10-27 without a model call: the summary
+prompt declared Cake's runtime Developer message out of scope, and the returned
+summary dropped lines that only restated the per-call temp path or an environment
+fact absent from the retired transcript. `summary_instruction_version` was 2.
+Task 005 removed the containment on 2026-10-27 by passing Cake's
+`--no-runtime-context`, which omits the runtime Developer message at the source;
+the prompt and scrub are gone and `summary_instruction_version` is 3. No live
+re-probe was run; the synthetic probe result above remains the only live recall
+evidence.
 
 ## Fixtures
 

@@ -64,7 +64,7 @@ carried its own temp cwd/environment and the probe repeated it. Follow-up task
 004 owns that defect; the real-regression full critical-fact probe was not run.
 Procedure and result: `docs/single-request-recall-probe.md`.
 
-## Summarizer runtime metadata (done)
+## Summarizer runtime metadata (done; superseded by task 005)
 
 Task 004 fixes the false working directory and environment that the task 003
 probe found. Cake appends a Developer message with the child process's working
@@ -77,10 +77,22 @@ summarizer cannot suppress it with `--no-session --no-tools --no-skills`.
 absent from the transcript. Before a checkpoint, `cakecli.Summarize` also drops
 lines that contain the per-call `cake-compact-summary-` temp path or that begin
 with a runtime label and assert a runtime fact absent from the retired
-transcript. `summary_instruction_version` is 2. Tests cover the exact task 003
+transcript. `summary_instruction_version` was 2. Tests cover the exact task 003
 contamination, the child `$PWD`, transcript-backed environment facts, prose that
 merely mentions runtime terms, and a summary made only of runtime metadata.
-`just ci` and `go test -race ./...` pass; no model call.
+`just ci` and `go test -race ./...` pass; no model call. Task 005 replaced this
+containment with Cake's `--no-runtime-context`; see below.
+
+## Summarizer runtime context source fix (done)
+
+Task 005 removes the prompt-plus-scrub containment now that Cake has the source
+fix. `cakecli.Summarize` probes `cake --help` for `--no-runtime-context`, passes
+it to the summarizer, and fails with
+`cake --no-runtime-context is unavailable; upgrade cake` when absent. The
+runtime-boundary prompt and the summary scanner are removed;
+`summary_instruction_version` is 3. Tests cover the flag being passed, the
+missing-flag failure, and the prompt. `just ci`, `go test -race ./...`, and the
+real-Cake `test-cake` build pass without a model call.
 
 ## Stage timing (done)
 
@@ -108,9 +120,6 @@ run pass without a model call.
 
 ## Later
 
-- Add or use a Cake CLI switch that omits the process-environment Developer
-  message for non-agent calls. The current prompt plus summary scrub contains
-  the leak, but the source fix belongs in Cake.
 - Add a small `-payload-out` or dry-run payload printer so other tools can
   produce the protocol payload without linking the Go code.
 - Decide whether the `-fork` escape hatch still earns its place now that

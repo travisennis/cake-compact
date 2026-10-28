@@ -14,7 +14,7 @@ import (
 
 // SummaryInstructionVersion identifies the summary prompt below. Bump it when
 // the prompt changes in a way that affects the stored summary.
-const SummaryInstructionVersion = 2
+const SummaryInstructionVersion = 3
 
 // Summarizer turns an earlier-session transcript into a checkpoint summary. It
 // also returns the provider usage the summary call reported; a summarizer with
@@ -85,9 +85,6 @@ func BuildSystemPrompt(instructions string) string {
 	builder.WriteString(`You are the context-compaction summarizer for the Cake coding assistant.
 
 The text supplied on stdin is an earlier portion of one coding session, ordered oldest first. Write a compact, factual summary that lets the assistant continue the work with less context.
-
-Runtime boundary:
-A separate Developer message may describe the summarizer's own process: its working directory, date, platform, architecture, shell, and terminal. That message is not session content. Never copy it, infer from it, or present it as a session fact. If the transcript does not state a fact, do not assert it.
 
 Preserve:
 - the user's goals, constraints, and corrections;

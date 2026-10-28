@@ -5,14 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 )
 
 // ResolveDataDir returns the Cake data root. It matches Cake's own resolution:
@@ -197,14 +196,67 @@ type Usage struct {
 	TotalTokens  uint64 `json:"total_tokens"`
 }
 
+// ErrNoRuntimeContextUnavailable marks a Cake binary without the root
+// --no-runtime-context flag. Callers must not fall back to prompting around
+// the process-environment Developer message.
+var ErrNoRuntimeContextUnavailable = errors.New("cake --no-runtime-context is unavailable; upgrade cake")
+
+// RuntimeContextUnavailableError reports a binary that cannot suppress the
+// process-environment Developer message.
+type RuntimeContextUnavailableError struct {
+	Binary string
+	Detail string
+}
+
+// Error includes the upgrade instruction so the operator sees the fix.
+func (e *RuntimeContextUnavailableError) Error() string {
+	detail := strings.TrimSpace(e.Detail)
+	if detail == "" {
+		detail = "the flag is not implemented"
+	}
+	return fmt.Sprintf("%s (%s: %s)", ErrNoRuntimeContextUnavailable.Error(), e.Binary, detail)
+}
+
+// Unwrap lets callers test with errors.Is(err, ErrNoRuntimeContextUnavailable).
+func (e *RuntimeContextUnavailableError) Unwrap() error { return ErrNoRuntimeContextUnavailable }
+
+// NoRuntimeContextAvailable reports whether `cake --help` lists the root
+// --no-runtime-context flag. It needs no session, no payload, and no model.
+func NoRuntimeContextAvailable(ctx context.Context, binary string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("cake --no-runtime-context check cancelled: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, binary, "--help")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("cake --no-runtime-context check cancelled: %w", ctxErr)
+		}
+		detail := firstNonEmpty(stderr.String(), stdout.String(), err.Error())
+		return &RuntimeContextUnavailableError{Binary: binary, Detail: detail}
+	}
+	if !strings.Contains(stdout.String(), "--no-runtime-context") {
+		return &RuntimeContextUnavailableError{Binary: binary, Detail: "the flag is not listed in cake --help"}
+	}
+	return nil
+}
+
 // Summarize asks a tool-less, session-less Cake invocation to summarize the
-// transcript. The child runs in a temporary directory with a temporary data
-// root so the summary call cannot pollute the user's sessions or telemetry.
+// transcript. The invocation omits Cake's process-environment Developer
+// message, so the summary cannot treat the summarizer's cwd, date, platform,
+// shell, or terminal as session content. The child runs in a temporary
+// directory with a temporary data root so the summary call cannot pollute the
+// user's sessions or telemetry.
 // The returned usage is that invocation's own provider usage; a response whose
 // usage is absent or unparseable leaves it zero rather than failing a summary
 // that otherwise succeeded.
 func Summarize(ctx context.Context, options SummaryOptions) (string, Usage, error) {
 	var usage Usage
+	if err := NoRuntimeContextAvailable(ctx, options.Binary); err != nil {
+		return "", usage, err
+	}
 	tempDir, err := os.MkdirTemp("", "cake-compact-summary-*")
 	if err != nil {
 		return "", usage, err
@@ -224,6 +276,7 @@ func Summarize(ctx context.Context, options SummaryOptions) (string, Usage, erro
 		"--no-session",
 		"--no-tools",
 		"--no-skills",
+		"--no-runtime-context",
 		"--output-format", "json",
 		"--system-prompt", promptPath,
 	}
@@ -265,141 +318,8 @@ func Summarize(ctx context.Context, options SummaryOptions) (string, Usage, erro
 	if completion.Result == nil || strings.TrimSpace(*completion.Result) == "" {
 		return "", usage, fmt.Errorf("summarizer returned an empty summary")
 	}
-	summary := sanitizeSummary(strings.TrimSpace(*completion.Result), options.Transcript, tempDir, time.Now())
-	if summary == "" {
-		return "", usage, fmt.Errorf("summarizer returned only its own runtime metadata")
-	}
+	summary := strings.TrimSpace(*completion.Result)
 	return summary, usage, nil
-}
-
-// summaryRuntimeFact is one piece of Cake's process environment that the
-// summarizer must not present as session content.
-type summaryRuntimeFact struct {
-	values []string
-}
-
-func (fact summaryRuntimeFact) matches(text string) bool {
-	lower := strings.ToLower(text)
-	for _, value := range fact.values {
-		if value != "" && strings.Contains(lower, strings.ToLower(value)) {
-			return true
-		}
-	}
-	return false
-}
-
-// summaryRuntimeFacts describes the environment Cake adds as a separate
-// Developer message. Cake's build_initial_prompt_messages_with_enabled_tools
-// appends that message even when --system-prompt replaces the system prompt, so
-// the summarizer cannot suppress it from this process.
-func summaryRuntimeFacts(workingDir string, now time.Time) ([]summaryRuntimeFact, []string) {
-	dirs := []string{workingDir}
-	if resolved, err := filepath.EvalSymlinks(workingDir); err == nil && resolved != workingDir {
-		dirs = append(dirs, resolved)
-	}
-
-	platform := []string{runtime.GOOS}
-	switch runtime.GOOS {
-	case "darwin":
-		platform = append(platform, "macos", "mac os")
-	case "windows":
-		platform = append(platform, "windows")
-	}
-
-	architecture := []string{runtime.GOARCH}
-	switch runtime.GOARCH {
-	case "arm64":
-		architecture = append(architecture, "aarch64")
-	case "amd64":
-		architecture = append(architecture, "x86_64", "x86-64")
-	case "386":
-		architecture = append(architecture, "i386", "x86")
-	}
-
-	shell := []string{}
-	if value := os.Getenv("SHELL"); value != "" {
-		shell = append(shell, value)
-		if base := filepath.Base(value); base != value {
-			shell = append(shell, base)
-		}
-	}
-
-	terminal := []string{}
-	if value := os.Getenv("TERM_PROGRAM"); value != "" {
-		terminal = append(terminal, value)
-	}
-	if value := os.Getenv("TERM"); value != "" {
-		terminal = append(terminal, value)
-	}
-
-	return []summaryRuntimeFact{
-		{values: platform},
-		{values: architecture},
-		{values: shell},
-		{values: terminal},
-		{values: []string{now.Format("2006-01-02")}},
-	}, dirs
-}
-
-// sanitizeSummary removes lines that can only have come from the summarizer's
-// own process environment. A line with an environment label is dropped when it
-// asserts a runtime fact that the retired transcript does not contain; a path
-// from the per-call summary temp directory is always dropped.
-func sanitizeSummary(summary, transcript, workingDir string, now time.Time) string {
-	facts, dirs := summaryRuntimeFacts(workingDir, now)
-	lines := strings.Split(summary, "\n")
-	kept := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if runtimeOnlyLine(line, transcript, facts, dirs) {
-			continue
-		}
-		kept = append(kept, line)
-	}
-
-	cleaned := strings.TrimSpace(strings.Join(kept, "\n"))
-	for strings.Contains(cleaned, "\n\n\n") {
-		cleaned = strings.ReplaceAll(cleaned, "\n\n\n", "\n\n")
-	}
-	return cleaned
-}
-
-func runtimeOnlyLine(line, transcript string, facts []summaryRuntimeFact, dirs []string) bool {
-	lower := strings.ToLower(line)
-	if strings.Contains(lower, "cake-compact-summary-") {
-		return true
-	}
-	for _, dir := range dirs {
-		if dir != "" && strings.Contains(line, dir) {
-			return true
-		}
-	}
-	if !runtimeLabelAtStart(line) {
-		return false
-	}
-	present, missing := 0, 0
-	for _, fact := range facts {
-		if fact.matches(line) {
-			present++
-			if !fact.matches(transcript) {
-				missing++
-			}
-		}
-	}
-	return present > 0 && missing > 0
-}
-
-func runtimeLabelAtStart(line string) bool {
-	trimmed := strings.ToLower(strings.TrimLeft(strings.TrimSpace(line), "-*#>_ \t"))
-	for _, label := range []string{
-		"working directory", "current working directory", "environment",
-		"platform", "architecture", "shell", "terminal", "today's date",
-		"current date", "date",
-	} {
-		if strings.HasPrefix(trimmed, label) {
-			return true
-		}
-	}
-	return false
 }
 
 // environmentWith returns the process environment with key set to value,

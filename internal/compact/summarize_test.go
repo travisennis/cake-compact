@@ -52,12 +52,18 @@ func TestBuildSystemPromptIncludesExtraInstructions(t *testing.T) {
 	for _, want := range []string{
 		"context-compaction summarizer",
 		"focus on the failing command",
-		"Runtime boundary:",
-		"not session content",
-		"Never copy it",
+		"Do not invent facts",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt is missing %q: %s", want, prompt)
+		}
+	}
+	for _, unwanted := range []string{
+		"Runtime boundary:",
+		"Developer message",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt still contains %q: %s", unwanted, prompt)
 		}
 	}
 }

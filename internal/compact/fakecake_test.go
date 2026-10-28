@@ -52,6 +52,15 @@ func fakeCakeMain(args []string) int {
 			return 0
 		}
 	}
+	if len(positional) == 0 {
+		for _, arg := range args {
+			if arg == "--help" || arg == "-h" {
+				fmt.Println("Usage: cake [OPTIONS]")
+				fmt.Println("      --no-runtime-context  Omit the process-environment Developer message")
+				return 0
+			}
+		}
+	}
 	if len(positional) < 2 || positional[0] != "sessions" || positional[1] != "checkpoint" {
 		fmt.Fprintln(os.Stderr, "fake cake: unsupported invocation")
 		return 2
