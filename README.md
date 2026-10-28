@@ -525,6 +525,6 @@ is reported as success; otherwise the source file is left byte-stable.
 
 Delete this directory. The wrapper is external, so removing it leaves Cake's
 checkpoint support in place. Sessions that received a checkpoint keep their raw
-history and the appended record; they need a Cake binary that knows the
-measurement fields to resume. Sessions compacted with `-fork` can be deleted as
-ordinary session files, and the source sessions remain untouched.
+history and the appended record; checkpoints with measurement fields need a
+Cake binary that knows them to resume. Sessions compacted with `-fork` can be
+deleted as ordinary session files, and the source sessions remain untouched.
