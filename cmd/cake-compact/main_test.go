@@ -651,6 +651,31 @@ func TestPrintCompactionResultShowsSummaryUsage(t *testing.T) {
 	}
 }
 
+func TestCompactorCarriesSummarizerSelectionFlags(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "fake-cake")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	flags := commonFlags{
+		cakeBin:                   bin,
+		dataDir:                   t.TempDir(),
+		summarizerModel:           "summary-model",
+		summarizerProfile:         "summary-profile",
+		summarizerReasoningEffort: "low",
+	}
+	compactor, _, err := flags.compactor("manual", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := compactor.Summarizer.(compact.CakeSummarizer)
+	if !ok {
+		t.Fatalf("summarizer = %T, want compact.CakeSummarizer", compactor.Summarizer)
+	}
+	if got.Model != "summary-model" || got.Profile != "summary-profile" || got.ReasoningEffort != "low" {
+		t.Fatalf("summarizer selection = %+v, want the configured model/profile/effort", got)
+	}
+}
+
 // A summary-file run has no provider usage, so the human output omits the cost
 // line rather than printing a zero.
 func TestPrintCompactionResultOmitsUsageWithoutAProvider(t *testing.T) {

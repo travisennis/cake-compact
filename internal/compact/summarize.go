@@ -62,20 +62,22 @@ func (s CommandSummarizer) Summarize(ctx context.Context, transcript string) (st
 
 // CakeSummarizer asks a tool-less, session-less Cake invocation for a summary.
 type CakeSummarizer struct {
-	Binary       string
-	Model        string
-	Profile      string
-	Instructions string
+	Binary          string
+	Model           string
+	Profile         string
+	ReasoningEffort string
+	Instructions    string
 }
 
 // Summarize runs Cake as the summarizer.
 func (s CakeSummarizer) Summarize(ctx context.Context, transcript string) (string, cakecli.Usage, error) {
 	return cakecli.Summarize(ctx, cakecli.SummaryOptions{
-		Binary:       s.Binary,
-		Model:        s.Model,
-		Profile:      s.Profile,
-		SystemPrompt: BuildSystemPrompt(s.Instructions),
-		Transcript:   transcript,
+		Binary:          s.Binary,
+		Model:           s.Model,
+		Profile:         s.Profile,
+		ReasoningEffort: s.ReasoningEffort,
+		SystemPrompt:    BuildSystemPrompt(s.Instructions),
+		Transcript:      transcript,
 	})
 }
 

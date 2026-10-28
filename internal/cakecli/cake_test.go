@@ -179,6 +179,45 @@ printf '{"result":"the summary"}'
 	}
 }
 
+func TestSummarizePassesSelectionFlags(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("sh is unavailable")
+	}
+	argsPath := filepath.Join(t.TempDir(), "args")
+	script := writeScript(t, `printf '%s\n' "$@" > "`+argsPath+`"
+cat >/dev/null
+printf '{"result":"the summary"}'
+`)
+	summary, _, err := Summarize(context.Background(), SummaryOptions{
+		Binary:          script,
+		Model:           "summary-model",
+		Profile:         "summary-profile",
+		ReasoningEffort: "low",
+		SystemPrompt:    "summarize",
+		Transcript:      "USER:\nhello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary != "the summary" {
+		t.Fatalf("summary = %q", summary)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	for _, want := range []string{
+		"--model\nsummary-model\n",
+		"--profile\nsummary-profile\n",
+		"--reasoning-effort\nlow\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summarizer args missing %q: %s", want, got)
+		}
+	}
+}
+
 func TestSummarizeRequiresNoRuntimeContext(t *testing.T) {
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		t.Skip("sh is unavailable")

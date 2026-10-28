@@ -133,11 +133,12 @@ was paid for.
 
 Recommended order:
 
-1. Add `-summarizer-reasoning-effort`, `-summary-max-tokens`, and a summary
-   length target; capture `reasoning_tokens` and `cached_tokens` in
-   `summary_usage`. Run a paid A/B on Phase 5 sessions (A1: three summaries,
-   ~0.5M input; no follow-up turns) and grade against the annotation sheets.
-   Expected 30–60 s -> 10–18 s.
+1. Summarizer controls: `-summarizer-model` and `-summarizer-profile` exist;
+   `-summarizer-reasoning-effort` is implemented. Still add
+   `-summary-max-tokens` and a summary length target; capture `reasoning_tokens`
+   and `cached_tokens` in `summary_usage`. Run a paid A/B on Phase 5 sessions
+   (A1: three summaries, ~0.5M input; no follow-up turns) and grade against the
+   annotation sheets. Expected 30–60 s -> 10–18 s.
 2. Build an evidence pack (all messages, Edit/Write args, commands) plus a
    deterministic exact-reference ledger; the model writes only the narrative.
    Expected 10–18 s -> 6–10 s, 65–80% less input, equal or better exact-fact

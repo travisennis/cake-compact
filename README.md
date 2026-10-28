@@ -205,6 +205,9 @@ cake-compact compact -dry-run <session-uuid>
 cake-compact compact -summary-file notes.txt <session-uuid>
 cake-compact compact -summarizer-command './summarize.sh' <session-uuid>
 
+# Try a different model, profile, or reasoning effort for the summary.
+cake-compact compact -summarizer-model deepseek-flash -summarizer-reasoning-effort low <session-uuid>
+
 # Escape hatch: write a new minimal session instead of appending in place.
 cake-compact compact -fork -summary-file notes.txt <session-uuid>
 ```
@@ -360,6 +363,7 @@ Run `cake-compact help` for the full list. The important ones:
 | `-summary-file` | Use a fixed summary. |
 | `-summarizer-command` | Shell command: transcript on stdin, summary on stdout. |
 | `-summarizer-model` / `-summarizer-profile` | Model/profile for the default Cake summarizer. |
+| `-summarizer-reasoning-effort` | Reasoning effort for the default Cake summarizer (for example `low` or `none`). |
 | `-instructions` | Extra focus for the summary prompt. |
 | `-dry-run` | Plan without a model call or write. Never calls the verb. |
 | `-no-verify` | Skip the final `cake replay` validation (fork only). |
@@ -401,11 +405,13 @@ is reported as success; otherwise the source file is left byte-stable.
   injection, factual fidelity, and summary quality are not evaluated; this is
   exactly the gap Cake's separate qualification milestone exists to close.
 - Summary usage is invisible to Cake's task accounting. Use a cheap
-  `-summarizer-model` while experimenting.
+  `-summarizer-model` and a low `-summarizer-reasoning-effort` while
+  experimenting.
 - The default summarizer uses user-level settings, not the project's
   `.cake/settings.toml`: it runs in a temporary directory so project hooks,
   AGENTS.md, skills, and tools cannot affect the summary. Pass
-  `-summarizer-model` or `-summarizer-profile` to choose the model.
+  `-summarizer-model`, `-summarizer-profile`, or
+  `-summarizer-reasoning-effort` to choose the model and reasoning settings.
 - The fork escape hatch writes a new session containing only metadata and the
   checkpoint; the source remains the raw audit record. It is mainly useful for
   exporting or handing off a compacted view.

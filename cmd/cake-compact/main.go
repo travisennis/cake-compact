@@ -79,6 +79,8 @@ Flags shared by all commands:
   -summarizer-command <cmd>   shell command: transcript on stdin, summary on stdout
   -summarizer-model <name>    model for the default cake summarizer
   -summarizer-profile <name>  profile for the default cake summarizer
+  -summarizer-reasoning-effort <level>
+                              cake reasoning effort for the summarizer
   -instructions <text>        extra focus for the summary prompt
   -threshold-percent <n>      compact at this percent of the window (default 80)
   -threshold-tokens <n>       explicit trigger instead of a window percentage
@@ -116,25 +118,26 @@ Examples:
 }
 
 type commonFlags struct {
-	cakeBin           string
-	dataDir           string
-	forkMode          bool
-	summaryFile       string
-	summarizerCommand string
-	summarizerModel   string
-	summarizerProfile string
-	instructions      string
-	thresholdPercent  int
-	thresholdTokens   uint64
-	window            uint64
-	keepTokens        uint64
-	minReduction      int
-	force             bool
-	dryRun            bool
-	jsonOut           bool
-	verbose           bool
-	noVerify          bool
-	timeout           time.Duration
+	cakeBin                   string
+	dataDir                   string
+	forkMode                  bool
+	summaryFile               string
+	summarizerCommand         string
+	summarizerModel           string
+	summarizerProfile         string
+	summarizerReasoningEffort string
+	instructions              string
+	thresholdPercent          int
+	thresholdTokens           uint64
+	window                    uint64
+	keepTokens                uint64
+	minReduction              int
+	force                     bool
+	dryRun                    bool
+	jsonOut                   bool
+	verbose                   bool
+	noVerify                  bool
+	timeout                   time.Duration
 }
 
 func (c *commonFlags) register(fs *flag.FlagSet) {
@@ -145,6 +148,7 @@ func (c *commonFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.summarizerCommand, "summarizer-command", "", "shell summarizer command")
 	fs.StringVar(&c.summarizerModel, "summarizer-model", "", "model for the cake summarizer")
 	fs.StringVar(&c.summarizerProfile, "summarizer-profile", "", "profile for the cake summarizer")
+	fs.StringVar(&c.summarizerReasoningEffort, "summarizer-reasoning-effort", "", "reasoning effort for the cake summarizer")
 	fs.StringVar(&c.instructions, "instructions", "", "extra summary focus")
 	fs.IntVar(&c.thresholdPercent, "threshold-percent", 80, "trigger percent of the window")
 	fs.Uint64Var(&c.thresholdTokens, "threshold-tokens", 0, "explicit trigger token count")
@@ -192,10 +196,11 @@ func (c *commonFlags) compactor(trigger string, force bool) (*compact.Compactor,
 		summarizer = compact.CommandSummarizer{Command: c.summarizerCommand}
 	default:
 		summarizer = compact.CakeSummarizer{
-			Binary:       binary,
-			Model:        c.summarizerModel,
-			Profile:      c.summarizerProfile,
-			Instructions: c.instructions,
+			Binary:          binary,
+			Model:           c.summarizerModel,
+			Profile:         c.summarizerProfile,
+			ReasoningEffort: c.summarizerReasoningEffort,
+			Instructions:    c.instructions,
 		}
 	}
 

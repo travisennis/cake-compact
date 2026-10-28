@@ -181,11 +181,12 @@ func Replay(ctx context.Context, binary, dataDir, sessionID string) ([]byte, err
 
 // SummaryOptions describes one summarizer run.
 type SummaryOptions struct {
-	Binary       string
-	Model        string
-	Profile      string
-	SystemPrompt string
-	Transcript   string
+	Binary          string
+	Model           string
+	Profile         string
+	ReasoningEffort string
+	SystemPrompt    string
+	Transcript      string
 }
 
 // Usage is the provider-reported token usage for one Cake invocation. A zero
@@ -285,6 +286,9 @@ func Summarize(ctx context.Context, options SummaryOptions) (string, Usage, erro
 	}
 	if options.Profile != "" {
 		args = append(args, "--profile", options.Profile)
+	}
+	if options.ReasoningEffort != "" {
+		args = append(args, "--reasoning-effort", options.ReasoningEffort)
 	}
 	args = append(args, "-")
 
