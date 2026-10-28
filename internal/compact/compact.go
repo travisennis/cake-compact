@@ -229,6 +229,25 @@ func Analyze(file *session.File, options Options) (*Plan, Decision, error) {
 		}, nil
 	}
 
+	fit, adjusted, err := fitTailToTranscript(projected, keep, options.MaxTranscriptChars)
+	if err != nil {
+		return plan, Decision{Compact: false, Reason: err.Error()}, nil
+	}
+	if adjusted {
+		plan.Start = fit.Selection.Start
+		plan.Anchor = fit.Selection.Anchor
+		plan.Prefix = fit.Prefix
+		plan.Retained = fit.Retained
+		plan.KeepTarget = fit.KeepTokens
+		plan.RetainedTokens = session.EstimateTokens(plan.Retained)
+		if before > 0 && plan.RetainedTokens >= before && !options.Force {
+			return plan, Decision{
+				Compact: false,
+				Reason:  fmt.Sprintf("retained tail alone does not reduce context: %d >= %d estimated input tokens", plan.RetainedTokens, before),
+			}, nil
+		}
+	}
+
 	return plan, Decision{Compact: true, Reason: reason}, nil
 }
 
@@ -359,6 +378,104 @@ batch:
 		}
 	}
 	return tailSelection{Start: start, Anchor: anchor}, nil
+}
+
+// fittedTail is a selected tail whose rendered prefix fits the transcript cap.
+type fittedTail struct {
+	Selection  tailSelection
+	Prefix     []session.Item
+	Retained   []session.Item
+	KeepTokens uint64
+}
+
+// fitTailToTranscript raises keep until the rendered retired prefix fits within
+// maxChars. It searches for the smallest token target that fits, so the
+// retained tail grows only as much as the cap requires. adjusted is true when
+// the initial target overflowed and a larger target was selected. An error
+// means no nonempty prefix can fit, even by retaining the whole session.
+func fitTailToTranscript(items []session.Item, initialKeep uint64, maxChars int) (fittedTail, bool, error) {
+	initial, fits, err := tailAtKeep(items, initialKeep, maxChars)
+	if err != nil {
+		return fittedTail{}, false, err
+	}
+	if fits {
+		return initial, false, nil
+	}
+
+	low := initialKeep
+	high := totalItemTokens(items)
+	if high <= low {
+		return fittedTail{}, false, fmt.Errorf(
+			"summary transcript exceeds %d characters; no larger keep target is available",
+			maxChars,
+		)
+	}
+	best, fits, err := tailAtKeep(items, high, maxChars)
+	if err != nil {
+		return fittedTail{}, false, err
+	}
+	if !fits {
+		return fittedTail{}, false, fmt.Errorf(
+			"summary transcript exceeds %d characters even with every item retained",
+			maxChars,
+		)
+	}
+
+	for high-low > 1 {
+		middle := low + (high-low)/2
+		candidate, fits, err := tailAtKeep(items, middle, maxChars)
+		if err != nil {
+			return fittedTail{}, false, err
+		}
+		if fits {
+			high = middle
+			best = candidate
+		} else {
+			low = middle
+		}
+	}
+
+	if len(best.Prefix) == 0 {
+		return fittedTail{}, false, fmt.Errorf(
+			"summary transcript exceeds %d characters; no nonempty prefix fits",
+			maxChars,
+		)
+	}
+	return best, true, nil
+}
+
+// tailAtKeep reports whether the prefix selected at keep fits the transcript cap.
+// An empty prefix fits trivially, but the caller must reject it as a compaction.
+func tailAtKeep(items []session.Item, keep uint64, maxChars int) (fittedTail, bool, error) {
+	selection, err := selectTail(items, keep)
+	if err != nil {
+		return fittedTail{}, false, err
+	}
+	prefix, retained, err := planSides(items, selection)
+	if err != nil {
+		return fittedTail{}, false, err
+	}
+	fit := fittedTail{
+		Selection:  selection,
+		Prefix:     prefix,
+		Retained:   retained,
+		KeepTokens: keep,
+	}
+	if len(prefix) == 0 {
+		return fit, true, nil
+	}
+	if _, err := BuildTranscript(prefix, maxChars); err != nil {
+		return fit, false, nil
+	}
+	return fit, true, nil
+}
+
+func totalItemTokens(items []session.Item) uint64 {
+	var total uint64
+	for _, item := range items {
+		total += session.EstimateItemTokens(item)
+	}
+	return total
 }
 
 // planSides splits the projected context into the retired prefix and the

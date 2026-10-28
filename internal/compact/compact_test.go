@@ -398,6 +398,60 @@ func TestAnalyzeSingleRequestSelectsABoundedTail(t *testing.T) {
 	}
 }
 
+func TestAnalyzeRaisesKeepToFitTheTranscriptCap(t *testing.T) {
+	const (
+		initialKeep        = 10000
+		maxTranscriptChars = 100000
+	)
+	file := loadSingleRequestFixture(t)
+	projected, err := file.Projected()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	initialSelection, err := selectTail(projected, initialKeep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialPrefix, _, err := planSides(projected, initialSelection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildTranscript(initialPrefix, maxTranscriptChars); err == nil {
+		t.Fatalf("fixture prefix fits %d characters; the regression no longer overflows", maxTranscriptChars)
+	}
+
+	plan, decision, err := Analyze(file, Options{
+		ThresholdTokens:    60000,
+		KeepTokens:         initialKeep,
+		MaxTranscriptChars: maxTranscriptChars,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Compact {
+		t.Fatalf("expected compaction after the keep target is raised: %s", decision.Reason)
+	}
+	if plan.KeepTarget <= initialKeep {
+		t.Fatalf("keep target = %d, want it raised above %d", plan.KeepTarget, initialKeep)
+	}
+	if plan.Start >= initialSelection.Start {
+		t.Fatalf("tail start = %d, want it moved back from %d", plan.Start, initialSelection.Start)
+	}
+	if _, err := BuildTranscript(plan.Prefix, maxTranscriptChars); err != nil {
+		t.Fatalf("raised keep target still overflows the cap: %v", err)
+	}
+	if len(plan.Prefix) >= len(initialPrefix) {
+		t.Fatalf("prefix = %d items, want fewer than the initial %d", len(plan.Prefix), len(initialPrefix))
+	}
+	if err := validateRetained(plan.Retained); err != nil {
+		t.Fatalf("raised tail is not a complete provider history: %v", err)
+	}
+	if plan.BeforeTokens > 0 && plan.RetainedTokens >= plan.BeforeTokens {
+		t.Fatalf("raised retained estimate = %d, want below before = %d", plan.RetainedTokens, plan.BeforeTokens)
+	}
+}
+
 func TestSingleRequestCheckpointProjectsThePinnedRequest(t *testing.T) {
 	dataDir := t.TempDir()
 	sourcePath := writeSingleRequestFixture(t, dataDir)

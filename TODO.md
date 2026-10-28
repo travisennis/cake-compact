@@ -119,6 +119,17 @@ no-op results report only load, plan, and total, and failed attempts return no
 timing document. `just ci`, `go test -race ./...`, and the real-Cake `test-cake`
 run pass without a model call.
 
+## Adaptive transcript budget (done)
+
+When the rendered retired prefix exceeds the 800,000-character transcript cap,
+`Analyze` raises `-keep-tokens` to the smallest larger value whose prefix fits,
+then re-selects at a complete provider boundary. `-keep-tokens` is the starting
+target; `keep_target` reports the effective value. No transcript content is
+truncated, and no summary call starts until a nonempty prefix fits. If retaining
+the whole session still leaves no nonempty prefix, compaction is refused with a
+reason. `TestAnalyzeRaisesKeepToFitTheTranscriptCap` covers a 100,000-character
+cap on the 493-item single-request fixture.
+
 ## Latency (open; spend-gated)
 
 Deep dive: `docs/latency-deep-dive.md` (2026-10-28, free analysis). The
@@ -127,9 +138,10 @@ output + 383` (R² = 0.96), ~165 output tokens/s. Visible summaries are 1.6–2.
 tokens, but the provider reports 5.6–8.3k output tokens; 54–70% of main-turn
 output is hidden reasoning, and the summarizer inherits the default model's
 `reasoning_effort = "max"`. Local load/plan/commit work is 33–50 ms. The
-transcript is 75–83% raw tool output; messages are under 4%. Default
-`-keep-tokens 20000` can exceed the 800k-character cap and fail after a turn
-was paid for.
+transcript is 75–83% raw tool output; messages are under 4%. Before the
+adaptive budget landed, the default `-keep-tokens 20000` could exceed the
+800k-character cap and fail after a turn was paid for; `Analyze` now raises the
+target before the summary call.
 
 Recommended order:
 
@@ -146,8 +158,8 @@ Recommended order:
    deterministic exact-reference ledger; the model writes only the narrative.
    Expected 10–18 s -> 6–10 s, 65–80% less input, equal or better exact-fact
    coverage. Add `-transcript-out` on dry-run so it can be inspected offline.
-3. Add an adaptive transcript budget or auto-raise keep-tokens so a long
-   session never hits the 800k cap after a paid turn.
+3. Adaptive transcript budget: implemented; see "Adaptive transcript budget
+   (done)". A higher default keep (50k–80k) and `-transcript-out` remain.
 4. Consider speculative summary during the turn only if the above still leaves
    more than ~15 s; core-native compaction is the long-term fix (cache reuse
    and in-turn boundaries).

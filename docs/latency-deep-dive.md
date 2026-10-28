@@ -25,9 +25,10 @@ reasoning:
   never passes `--reasoning-effort`.
 - The summarizer input is 75–83% raw tool output. User and assistant messages
   together are under 4% of the transcript.
-- The default `-keep-tokens 20000` can exceed the 800,000-character transcript
-  cap on a 2.4 MB session and fail *after* the turn was paid for. The Phase 5
-  run had to use `-keep-tokens 140000` on `9f3670d5` for this reason.
+- Before the 2026-10-28 auto-raise, the default `-keep-tokens 20000` could
+  exceed the 800,000-character transcript cap on a 2.4 MB session and fail
+  *after* the turn was paid for. The Phase 5 run had to use `-keep-tokens
+  140000` on `9f3670d5` for this reason.
 
 Recommended order:
 
@@ -153,9 +154,9 @@ more and summarize less
 ```
 
 At `-keep-tokens 140000` the same prefix fits at 779,351 characters. The Phase
-5 run used 140k for that reason. A user who runs `cake-compact compact` with
-defaults on a long session pays for the turn or reaches the end of a manual run
-and then gets a cap failure. Fixing this is independent of latency work.
+5 run used 140k for that reason. As of 2026-10-28, the wrapper raises the keep
+target automatically; on `9f3670d5` it converges at 134,600 tokens (134,733
+estimated retained) instead of failing at the default after a paid turn.
 
 If reasoning were included, the Phase 5 prefixes would grow by roughly 20–45%
 and most would exceed the cap. The current omission is a reasonable speed and
@@ -350,6 +351,11 @@ the Phase 5 annotations expect. Use C as part of A/B, not as the whole answer.
 
 ### D. Adaptive transcript budget / higher keep
 
+**Status (2026-10-28):** auto-raise implemented in cake-compact. When the
+rendered prefix exceeds 800,000 characters, `Analyze` raises the keep target to
+the smallest larger value whose prefix fits, then re-selects at a complete
+boundary. A higher default keep (50k–80k) and `-transcript-out` remain open.
+
 Two changes:
 
 - Auto-raise `-keep-tokens` (or switch to evidence mode) when the rendered
@@ -503,16 +509,16 @@ These are free and additive:
   done
   ```
 
-- 800k-cap reproduction:
+- 800k-cap check (updated 2026-10-28):
 
   ```sh
-  ./bin/cake-compact compact -dry-run -force -keep-tokens 20000 \
-    -summary-file /tmp/summary.txt -json \
+  ./bin/cake-compact compact -dry-run -force -keep-tokens 20000 -json \
     9f3670d5-84a9-4361-9910-4c220db643ec
   ```
 
-  It fails with the 800,000-character message. Re-run with
-  `-keep-tokens 140000`; it plans a 779,351-character transcript.
+  It raises `keep_target` to 134,600 and plans a 134,733-token tail without a
+  model call. Before the auto-raise, the same command failed with the
+  800,000-character message; an explicit `-keep-tokens 140000` was needed.
 
 - Transcript composition was measured by loading the session, calling
   `compact.Analyze` with `Force: true` and the stated keep target, then

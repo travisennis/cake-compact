@@ -64,7 +64,10 @@ keep a checkpoint-aware binary for compacted sessions.
    message that owns the tail (the nearest one at or before the boundary) is
    copied into the retained tail with a `user_input` pin, so the request stays
    exact while older work in the same request is summarized. The synthetic
-   historical summary is never treated as an anchor.
+   historical summary is never treated as an anchor. If the rendered prefix
+   transcript would exceed the 800,000-character cap, the keep target is raised
+   to the smallest larger value whose prefix fits and the tail is re-selected at
+   a complete boundary before any model call.
 5. It estimates the retired and retained sizes. `before_tokens` anchors on the
    newest complete `turn_usage.input_tokens` when that measurement is newer than
    the latest checkpoint (`basis: measured_usage`); when a checkpoint is newer,
@@ -105,6 +108,10 @@ prefix it replaced.
 
 - Walk backward from the newest item until the estimate reaches
   `-keep-tokens`. That is the initial budget boundary.
+- Render the retired prefix. If it exceeds the 800,000-character cap, raise the
+  target to the smallest larger value whose prefix fits, then re-select at a
+  complete boundary. This happens before the summary call and never truncates
+  transcript content.
 - Move the boundary back until the suffix is a complete provider history: no
   call without its output, no output without its call, and a message or
   reasoning item may not interrupt an open call. If the boundary lands on a
@@ -120,13 +127,16 @@ prefix it replaced.
   the new one.
 - The retained tail is estimated, then the summary is added. A plan is refused
   when no complete boundary exists, nothing precedes the tail, the retained
-  tail alone does not reduce the context, the summary does not reduce it, or
-  the summary transcript exceeds its bound. The result document names the
-  reason and the source session is left unchanged.
+  tail alone does not reduce the context, the summary does not reduce it, or no
+  nonempty summary transcript fits the character cap even after raising the
+  keep target. The result document names the reason and the source session is
+  left unchanged.
 
-`-keep-tokens` is a target, not a cap. A single indivisible tool result or the
-pinned request can push the retained estimate above it. `after_tokens` is also
-an estimate (4 characters per token, a 25% safety margin, and 1,000 tokens per
+`-keep-tokens` is the starting target, not a cap. A single indivisible tool
+result or the pinned request can push the retained estimate above it, and the
+wrapper raises the target when the rendered prefix would exceed the transcript
+cap. `keep_target` reports the effective target. `after_tokens` is also an
+estimate (4 characters per token, a 25% safety margin, and 1,000 tokens per
 inline image), and the 80k quality target used in qualification is a policy
 choice, not the model window maximum. Do not treat either number as a
 provider-measured bound.
@@ -357,7 +367,7 @@ Run `cake-compact help` for the full list. The important ones:
 | `-threshold-percent` | Trigger at this percent of the context window (default 80). |
 | `-threshold-tokens` | Explicit trigger instead of a percentage. |
 | `-window` | Override the window read from the session. |
-| `-keep-tokens` | Retained-tail target (default 20,000 or window/4). A target, not a cap: an indivisible item or the pinned request can exceed it. |
+| `-keep-tokens` | Starting retained-tail target (default 20,000 or window/4). It is raised automatically when the summary transcript would exceed 800,000 characters. |
 | `-min-reduction-percent` | Minimum estimated reduction (default 10). |
 | `-force` | Ignore the trigger and minimum reduction. |
 | `-summary-file` | Use a fixed summary. |
@@ -399,8 +409,10 @@ is reported as success; otherwise the source file is left byte-stable.
   can exceed it. Cake enforces only that the append reduces the estimate.
 - The summary is one model call over the retired prefix. There is no batching,
   no bounded multi-request summarization, and no real-model quality
-  qualification. A prefix whose transcript exceeds 800,000 characters fails
-  rather than silently dropping content.
+  qualification. The wrapper raises `-keep-tokens` to fit the
+  800,000-character transcript cap; if even retaining the whole session leaves
+  no nonempty prefix, it refuses compaction before the model call rather than
+  truncating content.
 - The transcript includes reasoning only when the provider supplied a `summary`
   array. Sessions that carry readable reasoning in `content`
   (`reasoning_text`) are currently omitted; no test pins that choice. See
