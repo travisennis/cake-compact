@@ -34,9 +34,9 @@ does not advertise `summary_usage` and `summary_time_ms`, compaction fails with
 `cake sessions checkpoint is unavailable; upgrade cake`. `run` checks this
 before starting the turn for both in-place and fork commits, so an unsupported
 binary cannot spend a model call on a turn whose compaction must then fail;
-pass `-no-compact` (turn only) or `-dry-run` to use an older build. There is no
-fallback to writing session JSONL, and `-fork` writes the same measurement
-fields, so it also needs the newer Cake reader.
+pass `-no-compact` (turn only) or `-dry-run` to use an older build. In-place
+mode never falls back to writing session JSONL. `-fork` writes the same
+measurement fields, so it also needs the newer Cake reader.
 
 If `cake --help` does not list `--no-runtime-context`, the default summarizer
 fails with `cake --no-runtime-context is unavailable; upgrade cake`. `run`
