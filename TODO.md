@@ -14,8 +14,9 @@ unchanged. Implemented:
   behind the explicit `-fork` flag.
 - The payload carries `trigger`, `summary`, `retained`,
   `estimated_input {before_tokens, after_tokens, basis}`,
-  `summary_instruction_version`, and optional `model`/`task_id`. Cake owns the
-  envelope, ids, timestamp, boundary, lock, validation, append, and sync.
+  `summary_instruction_version`, optional `model`/`task_id`, and optional
+  `summary_usage`/`summary_time_ms`. Cake owns the envelope, ids, timestamp,
+  boundary, lock, validation, append, and sync.
 - `before_tokens` anchors on the newest complete `turn_usage.input_tokens`
   (`measured_usage`) and falls back to the content estimate. A non-reducing
   estimate returns a non-compaction result and never calls the verb; 0/0 is
@@ -45,6 +46,19 @@ or command summarizer reports no usage and omits the field; a provider response
 whose usage is missing or malformed leaves it zero rather than failing the
 summary. Tests cover nested provider details, flat read-back, missing details,
 and reasoning greater than output.
+
+## Checkpoint usage persistence (done 2026-10-28)
+
+`compact -json`/`run -json` reporting is no longer the only place a
+measurement survives. Both commit paths copy `summary_usage` and
+`summary_time_ms` into the `compaction` record: in place through Cake's
+checkpoint payload, and in fork mode through the local checkpoint builder.
+Cake accepts the fields as optional additive payload/record fields, so a file
+or command summarizer still omits `summary_usage`; `summary_time_ms` is
+recorded for any summary path. The preflight reads the checkpoint help text
+and refuses a build that does not advertise both fields, before either commit
+path can spend a turn or summary call. Tests cover the protocol payload, the
+capability probe, the persisted in-place checkpoint, and the fork record.
 
 ## Bounded single-request tail selection (done)
 

@@ -18,22 +18,25 @@ used implicitly.
 
 ## Requirements
 
-- A Cake build with the checkpoint record, the append verb, and the root
+- A Cake build with the checkpoint record, the append verb, the optional
+  `summary_usage`/`summary_time_ms` checkpoint fields, and the root
   `--no-runtime-context` flag. That means the M1 `compaction` record (Cake
-  commit `2d9e4c0`, PR #747), `cake sessions checkpoint` (task 127), and
-  `--no-runtime-context` (Cake commit `0dc7c17`, PR #761). `cake --version`
-  reports `0.1.0` for all of them, so the wrapper probes the verb and the flag
-  itself.
+  commit `2d9e4c0`, PR #747), `cake sessions checkpoint` (task 127),
+  `--no-runtime-context` (Cake commit `0dc7c17`, PR #761), and the measurement
+  fields added in Cake `a16fbde` (PR #762). `cake --version` reports `0.1.0`
+  for all of them, so the wrapper probes the verb and its help text itself.
 - Go 1.25 or newer to build.
 - macOS or Linux. The wrapper takes a shared `flock` on the source session to
   read it and uses `sh` for `-summarizer-command`.
 
-If the binary cannot answer `cake sessions checkpoint --help`, compaction fails
-with `cake sessions checkpoint is unavailable; upgrade cake`. `run` checks this
-before starting the turn, so an unsupported binary cannot spend a model call on
-a turn whose compaction must then fail; pass `-no-compact` (turn only) or
-`-fork` (new-session writer) to use an older build. There is no fallback to
-writing session JSONL.
+If the binary cannot answer `cake sessions checkpoint --help`, or its help
+does not advertise `summary_usage` and `summary_time_ms`, compaction fails with
+`cake sessions checkpoint is unavailable; upgrade cake`. `run` checks this
+before starting the turn for both in-place and fork commits, so an unsupported
+binary cannot spend a model call on a turn whose compaction must then fail;
+pass `-no-compact` (turn only) or `-dry-run` to use an older build. In-place
+mode never falls back to writing session JSONL. `-fork` writes the same
+measurement fields, so it also needs the newer Cake reader.
 
 If `cake --help` does not list `--no-runtime-context`, the default summarizer
 fails with `cake --no-runtime-context is unavailable; upgrade cake`. `run`
@@ -91,14 +94,17 @@ keep a checkpoint-aware binary for compacted sessions.
    payload leaves the file byte-stable. The wrapper parses the returned
    diagnostic document for `session_id`, `checkpoint_id`, `boundary`,
    `before_tokens`, `after_tokens`, `retained_count`, `session_file`, and
-   `basis`.
+   `basis`. The payload also carries the summarizer's `summary_usage` and
+   `summary_time_ms` when available, so Cake persists them in the checkpoint
+   record.
 8. **Fork (`-fork`):** it writes a new session file containing `session_meta`
    and exactly one `compaction` record, then runs
    `cake --output-format stream-json replay <new>` to validate it. A failed
    validation removes the new file. The state file moves to the new id.
 
-Nothing in Cake changes. The in-place path never writes session JSONL itself;
-the fork path is reached only through `-fork`.
+The in-place path never writes session JSONL itself; it relies on Cake's
+checkpoint verb. The fork path writes a new minimal session file and is reached
+only through `-fork`.
 
 ### Selection and budget
 
@@ -299,8 +305,8 @@ Every command accepts `-json`.
 | `prefix_items` / `retained_items` | Planned item counts on each side of the boundary. |
 | `retained_count` | Retained records Cake persisted (same as `retained_items` on success). |
 | `summary_chars` / `transcript_chars` | Sizes used for the summary call. |
-| `summary_usage` | The summarizer's provider-reported tokens, including cached input, hidden reasoning, and visible output. Absent when the summarizer is a file or command, or the provider reported none. |
-| `summary_time_ms` | Wall time of the summary stage, including a summary-file read or command/model call. Present when nonzero; kept for compatibility. |
+| `summary_usage` | The summarizer's provider-reported tokens, including cached input, hidden reasoning, and visible output. Also persisted in the checkpoint record. Absent when the summarizer is a file or command, or the provider reported none. |
+| `summary_time_ms` | Wall time of the summary stage, including a summary-file read or command/model call. Also persisted in the checkpoint record. Present when nonzero; kept for compatibility. |
 | `timings` | Stage wall times in whole milliseconds. See [Stage timing](#stage-timing). |
 
 On a non-compaction result, `compacted` is `false` and `reason` says why;
@@ -321,7 +327,9 @@ provider's detail objects:
 
 Missing detail fields count as zero. The whole `summary_usage` object is absent
 when a file or command summarizer produced the summary, or when the provider
-reported no usage.
+reported no usage. When present, the same object and `summary_time_ms` are
+copied into the `compaction` checkpoint record, so the measurement persists
+without saving the `-json` result.
 
 ### Stage timing
 
@@ -481,6 +489,10 @@ is reported as success; otherwise the source file is left byte-stable.
   `summary_visible_tokens` is clamped when reasoning exceeds output. The
   compact result JSON and the human summary line are both asserted. No model
   call.
+- Summary usage persistence is covered offline: the checkpoint payload carries
+  the fields when present, the in-place fake Cake append stores them in the
+  compaction record, and the fork checkpoint builder writes them to its
+  record. No model call.
 - Summarizer runtime context is covered offline: a fake child proves the
   default invocation passes `--no-runtime-context`; a binary whose `--help`
   lacks the flag fails with the upgrade message before a second invocation and
@@ -511,7 +523,8 @@ is reported as success; otherwise the source file is left byte-stable.
 
 ## Removing it
 
-Delete this directory. Nothing in Cake changed. Sessions that received an
-in-place checkpoint keep their raw history and the appended record; they need a
-checkpoint-aware Cake binary to resume. Sessions compacted with `-fork` can be
+Delete this directory. The wrapper is external, so removing it leaves Cake's
+checkpoint support in place. Sessions that received a checkpoint keep their raw
+history and the appended record; checkpoints with measurement fields need a
+Cake binary that knows them to resume. Sessions compacted with `-fork` can be
 deleted as ordinary session files, and the source sessions remain untouched.

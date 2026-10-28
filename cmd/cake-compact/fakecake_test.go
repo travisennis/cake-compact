@@ -50,7 +50,7 @@ func fakeCakeMain(args []string) int {
 	if len(positional) >= 2 && positional[0] == "sessions" && positional[1] == "checkpoint" {
 		for _, arg := range args {
 			if arg == "--help" || arg == "-h" {
-				fmt.Println("Append one context-compaction checkpoint to an existing session")
+				fmt.Println("Append one context-compaction checkpoint; summary_usage and summary_time_ms are accepted")
 				return 0
 			}
 		}
@@ -76,11 +76,13 @@ func fakeCakeCheckpoint(sessionID string) int {
 		return 3
 	}
 	var payload struct {
-		Trigger                   string            `json:"trigger"`
-		Summary                   string            `json:"summary"`
-		Retained                  []json.RawMessage `json:"retained"`
-		EstimatedInput            map[string]any    `json:"estimated_input"`
-		SummaryInstructionVersion int               `json:"summary_instruction_version"`
+		Trigger                   string                `json:"trigger"`
+		Summary                   string                `json:"summary"`
+		Retained                  []json.RawMessage     `json:"retained"`
+		EstimatedInput            map[string]any        `json:"estimated_input"`
+		SummaryInstructionVersion int                   `json:"summary_instruction_version"`
+		SummaryUsage              *session.SummaryUsage `json:"summary_usage,omitempty"`
+		SummaryTimeMs             int64                 `json:"summary_time_ms,omitempty"`
 		Model                     *struct {
 			Model       string `json:"model"`
 			ModelConfig string `json:"model_config"`
@@ -132,6 +134,8 @@ func fakeCakeCheckpoint(sessionID string) int {
 			AfterTokens:  uint64(after),
 			Basis:        basis,
 		},
+		SummaryUsage:  payload.SummaryUsage,
+		SummaryTimeMs: payload.SummaryTimeMs,
 	}
 	line, err := json.Marshal(checkpoint)
 	if err != nil {

@@ -17,13 +17,15 @@ func samplePayload() CheckpointPayload {
 		Retained:                  []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"the tail"}`)},
 		EstimatedInput:            CheckpointEstimate{BeforeTokens: 12000, AfterTokens: 3000, Basis: "measured_usage"},
 		SummaryInstructionVersion: 1,
+		SummaryUsage:              &Usage{InputTokens: 1457, OutputTokens: 779, ReasoningTokens: 291, SummaryVisibleTokens: 488, TotalTokens: 2236},
+		SummaryTimeMs:             6757,
 		Model:                     &CheckpointModel{Model: "test-model", ModelConfig: "test"},
 		TaskID:                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 	}
 }
 
 func TestCheckpointAvailable(t *testing.T) {
-	script := writeScript(t, "printf 'Append one checkpoint\\n'\n")
+	script := writeScript(t, "printf 'Append one checkpoint; summary_usage and summary_time_ms are accepted\\n'\n")
 	if err := CheckpointAvailable(context.Background(), script); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,6 +40,25 @@ func TestCheckpointAvailable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cake sessions checkpoint is unavailable; upgrade cake") {
 		t.Fatalf("unclear error: %v", err)
+	}
+}
+
+func TestCheckpointAvailableRejectsAHelpWithoutMeasurementFields(t *testing.T) {
+	for name, help := range map[string]string{
+		"neither":         "Append one checkpoint",
+		"summary_usage":   "Append one checkpoint; summary_usage is accepted",
+		"summary_time_ms": "Append one checkpoint; summary_time_ms is accepted",
+	} {
+		t.Run(name, func(t *testing.T) {
+			old := writeScript(t, "printf '"+help+"\\n'\n")
+			err := CheckpointAvailable(context.Background(), old)
+			if err == nil || !errors.Is(err, ErrCheckpointUnavailable) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(err.Error(), "does not accept") {
+				t.Fatalf("unclear error: %v", err)
+			}
+		})
 	}
 }
 

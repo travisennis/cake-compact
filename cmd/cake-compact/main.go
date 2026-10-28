@@ -5,7 +5,8 @@
 // and appends one checkpoint to the existing session through
 // `cake sessions checkpoint`. The session id stays stable and raw history
 // stays on disk. An explicit -fork flag keeps the older minimal-session writer
-// as an escape hatch. Nothing in Cake changes.
+// as an escape hatch. The in-place path never writes session JSONL itself; Cake
+// owns the append and persists the summarizer measurement in the checkpoint.
 package main
 
 import (
@@ -510,10 +511,11 @@ func commandRun(args []string) int {
 		return 1
 	}
 
-	// Fail before the turn when the binary cannot append a checkpoint. The
-	// turn would otherwise succeed and then be discarded after spending a
-	// metered model call. -no-compact and -fork do not need the verb.
-	if !noCompact && !flags.forkMode {
+	// Fail before the turn when the binary cannot accept the checkpoint
+	// measurement fields. Both in-place and fork commits write them, so each
+	// path would otherwise fail after spending a turn and summary call.
+	// -no-compact and -dry-run write no checkpoint and need no probe.
+	if !noCompact && !flags.dryRun {
 		if err := cakecli.CheckpointAvailable(signalCtx, binary); err != nil {
 			fmt.Fprintln(os.Stderr, "cake-compact:", err)
 			return 1

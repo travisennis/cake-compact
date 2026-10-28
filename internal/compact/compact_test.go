@@ -458,6 +458,7 @@ func TestSingleRequestCheckpointProjectsThePinnedRequest(t *testing.T) {
 	compactor := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{
 			ThresholdTokens: 60000,
 			KeepTokens:      10000,
@@ -548,7 +549,7 @@ func TestBuildCheckpointShape(t *testing.T) {
 	if err != nil || !decision.Compact {
 		t.Fatalf("analyze: %v %+v", err, decision)
 	}
-	checkpoint, line, err := BuildCheckpoint(plan, "A compact summary.", newID, taskID, time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC))
+	checkpoint, line, err := BuildCheckpoint(plan, "A compact summary.", newID, taskID, time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC), nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,6 +578,56 @@ func TestBuildCheckpointShape(t *testing.T) {
 			t.Fatalf("checkpoint is missing %q", key)
 		}
 	}
+	for _, key := range []string{"summary_usage", "summary_time_ms"} {
+		if _, ok := decoded[key]; ok {
+			t.Fatalf("checkpoint must omit absent %q", key)
+		}
+	}
+}
+
+func TestBuildCheckpointPersistsSummaryUsage(t *testing.T) {
+	file := loadFixture(t)
+	plan, decision, err := Analyze(file, Options{Force: true, KeepTokens: 10})
+	if err != nil || !decision.Compact {
+		t.Fatalf("analyze: %v %+v", err, decision)
+	}
+	usage := &cakecli.Usage{
+		InputTokens:          1457,
+		CachedTokens:         0,
+		OutputTokens:         779,
+		ReasoningTokens:      291,
+		SummaryVisibleTokens: 488,
+		TotalTokens:          2236,
+	}
+
+	checkpoint, line, err := BuildCheckpoint(plan, "A compact summary.", newID, taskID, time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC), usage, 6757)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.SummaryUsage == nil || *checkpoint.SummaryUsage != (session.SummaryUsage{
+		InputTokens:          1457,
+		CachedTokens:         0,
+		OutputTokens:         779,
+		ReasoningTokens:      291,
+		SummaryVisibleTokens: 488,
+		TotalTokens:          2236,
+	}) {
+		t.Fatalf("summary usage = %+v", checkpoint.SummaryUsage)
+	}
+	if checkpoint.SummaryTimeMs != 6757 {
+		t.Fatalf("summary time = %d, want 6757", checkpoint.SummaryTimeMs)
+	}
+
+	var decoded struct {
+		SummaryUsage  session.SummaryUsage `json:"summary_usage"`
+		SummaryTimeMs int64                `json:"summary_time_ms"`
+	}
+	if err := json.Unmarshal(line, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SummaryUsage != *checkpoint.SummaryUsage || decoded.SummaryTimeMs != 6757 {
+		t.Fatalf("persisted measurement = %+v / %d", decoded.SummaryUsage, decoded.SummaryTimeMs)
+	}
 }
 
 func TestBuildCheckpointRejectsOversizedRecord(t *testing.T) {
@@ -588,7 +639,7 @@ func TestBuildCheckpointRejectsOversizedRecord(t *testing.T) {
 		Basis:        "content_class",
 		Trigger:      "manual",
 	}
-	if _, _, err := BuildCheckpoint(plan, "summary", newID, taskID, time.Now()); err == nil {
+	if _, _, err := BuildCheckpoint(plan, "summary", newID, taskID, time.Now(), nil, 0); err == nil {
 		t.Fatal("an oversized checkpoint must be rejected")
 	}
 }
@@ -604,6 +655,7 @@ func TestCompactWritesAValidatedNewSession(t *testing.T) {
 	compactor := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{
 			Force:               true,
 			KeepTokens:          10,
@@ -696,6 +748,7 @@ func TestCompactRejectsInsufficientReduction(t *testing.T) {
 	compactor := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{
 			Force:       true,
 			KeepTokens:  10,
@@ -722,6 +775,7 @@ func TestCompactingACompactedSessionUsesTheProjection(t *testing.T) {
 	first := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{Force: true, KeepTokens: 10, SummaryFile: writeSummary(t, "first summary about the retry policy")},
 		Now:     time.Now,
 		NewID:   func() (string, error) { return newID, nil },
@@ -736,6 +790,7 @@ func TestCompactingACompactedSessionUsesTheProjection(t *testing.T) {
 	second := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
+		CakeBin: writeFakeCake(t),
 		Options: Options{Force: true, KeepTokens: 1, SummaryFile: writeSummary(t, "second summary")},
 		Now:     time.Now,
 		NewID:   func() (string, error) { return secondID, nil },
@@ -777,13 +832,30 @@ func TestRealCakeForkSessionPassesReplay(t *testing.T) {
 	}
 	dataDir := t.TempDir()
 	sourcePath := writeFixture(t, dataDir)
+	ticks := 0
+	clock := func() time.Time {
+		current := time.Unix(0, 0).Add(time.Duration(ticks) * 5 * time.Millisecond)
+		ticks++
+		return current
+	}
 	compactor := &Compactor{
 		Mode:    ModeFork,
 		DataDir: dataDir,
 		CakeBin: binary,
-		Options: Options{Force: true, KeepTokens: 10, SummaryFile: writeSummary(t, "summary for replay validation")},
-		Now:     time.Now,
-		NewID:   func() (string, error) { return newID, nil },
+		Options: Options{Force: true, KeepTokens: 10},
+		Summarizer: usageSummarizer{
+			text: "summary for replay validation",
+			usage: cakecli.Usage{
+				InputTokens:          1457,
+				CachedTokens:         0,
+				OutputTokens:         779,
+				ReasoningTokens:      291,
+				SummaryVisibleTokens: 488,
+				TotalTokens:          2236,
+			},
+		},
+		Now:   clock,
+		NewID: func() (string, error) { return newID, nil },
 	}
 	result, err := compactor.Compact(context.Background(), sourcePath)
 	if err != nil || !result.Compacted {
@@ -795,6 +867,11 @@ func TestRealCakeForkSessionPassesReplay(t *testing.T) {
 	}
 	if !strings.Contains(string(output), `"type":"compaction"`) {
 		t.Fatalf("replay did not emit the checkpoint: %s", output)
+	}
+	for _, key := range []string{"summary_usage", "summary_time_ms"} {
+		if !strings.Contains(string(output), `"`+key+`"`) {
+			t.Fatalf("replay checkpoint is missing %s: %s", key, output)
+		}
 	}
 }
 
@@ -854,6 +931,29 @@ func TestCompactReportsSummaryUsageAndWallTime(t *testing.T) {
 		t.Fatalf("summary time = %d, want a positive wall time", result.SummaryTimeMs)
 	}
 
+	persisted, err := session.Load(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointIndex := persisted.LatestCheckpointIndex()
+	if checkpointIndex < 0 {
+		t.Fatal("no checkpoint was persisted")
+	}
+	checkpoint := persisted.Records[checkpointIndex].Checkpoint
+	if checkpoint.SummaryUsage == nil || *checkpoint.SummaryUsage != (session.SummaryUsage{
+		InputTokens:          1200,
+		CachedTokens:         900,
+		OutputTokens:         300,
+		ReasoningTokens:      180,
+		SummaryVisibleTokens: 120,
+		TotalTokens:          1500,
+	}) {
+		t.Fatalf("persisted summary usage = %+v", checkpoint.SummaryUsage)
+	}
+	if checkpoint.SummaryTimeMs != result.SummaryTimeMs {
+		t.Fatalf("persisted summary time = %d, want %d", checkpoint.SummaryTimeMs, result.SummaryTimeMs)
+	}
+
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -902,6 +1002,23 @@ func TestCompactOmitsUsageWithoutAProvider(t *testing.T) {
 	if result.SummaryUsage != nil {
 		t.Fatalf("summary usage = %+v, want nil", result.SummaryUsage)
 	}
+
+	persisted, err := session.Load(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointIndex := persisted.LatestCheckpointIndex()
+	if checkpointIndex < 0 {
+		t.Fatal("no checkpoint was persisted")
+	}
+	checkpoint := persisted.Records[checkpointIndex].Checkpoint
+	if checkpoint.SummaryUsage != nil {
+		t.Fatalf("persisted summary usage = %+v, want nil", checkpoint.SummaryUsage)
+	}
+	if checkpoint.SummaryTimeMs != result.SummaryTimeMs {
+		t.Fatalf("persisted summary time = %d, want %d", checkpoint.SummaryTimeMs, result.SummaryTimeMs)
+	}
+
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)

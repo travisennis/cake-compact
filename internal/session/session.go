@@ -112,6 +112,18 @@ type ModelIdentity struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
+// SummaryUsage mirrors the summarizer's provider-reported measurement carried
+// by a compaction checkpoint. It is the flat shape Cake accepts in the
+// checkpoint payload, not the nested per-attempt Usage record.
+type SummaryUsage struct {
+	InputTokens          uint64 `json:"input_tokens"`
+	CachedTokens         uint64 `json:"cached_tokens"`
+	OutputTokens         uint64 `json:"output_tokens"`
+	ReasoningTokens      uint64 `json:"reasoning_tokens"`
+	SummaryVisibleTokens uint64 `json:"summary_visible_tokens"`
+	TotalTokens          uint64 `json:"total_tokens"`
+}
+
 // Checkpoint is the payload of a compaction record.
 type Checkpoint struct {
 	Type                      string            `json:"type"`
@@ -126,6 +138,8 @@ type Checkpoint struct {
 	Model                     ModelIdentity     `json:"model"`
 	SummaryInstructionVersion int               `json:"summary_instruction_version"`
 	EstimatedInput            EstimatedInput    `json:"estimated_input"`
+	SummaryUsage              *SummaryUsage     `json:"summary_usage,omitempty"`
+	SummaryTimeMs             int64             `json:"summary_time_ms,omitempty"`
 }
 
 // Record is one parsed session line. Raw keeps the complete JSON object so it

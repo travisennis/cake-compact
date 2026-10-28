@@ -521,7 +521,7 @@ func TestRunAppendFailureReportsCompactionError(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "fake-cake")
 	body := fmt.Sprintf(`#!/bin/sh
 case "$*" in
-  *"sessions checkpoint --help"*) echo "Append a checkpoint"; exit 0 ;;
+  *"sessions checkpoint --help"*) echo "Append a checkpoint; summary_usage and summary_time_ms are accepted"; exit 0 ;;
   *sessions*) echo "Another cake invocation is currently writing to session %s." >&2; exit 1 ;;
 esac
 printf '{"session_id":"%s","result":"done"}'
@@ -642,7 +642,7 @@ func TestRunMissingRuntimeContextFlagFailsBeforeTurn(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "fake-cake")
 	body := fmt.Sprintf(`#!/bin/sh
 case "$*" in
-  *"sessions checkpoint --help"*) echo "Append a checkpoint"; exit 0 ;;
+  *"sessions checkpoint --help"*) echo "Append a checkpoint; summary_usage and summary_time_ms are accepted"; exit 0 ;;
   --help) echo "Usage: cake [OPTIONS]"; exit 0 ;;
 esac
 : > "$CAKE_COMPACT_TURN_MARKER"

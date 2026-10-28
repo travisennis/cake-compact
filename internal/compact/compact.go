@@ -682,14 +682,13 @@ func (c *Compactor) Compact(ctx context.Context, sourcePath string) (result *Res
 		return result, nil
 	}
 
-	if c.Mode == ModeInPlace {
-		// Fail before spending a model call on a binary that cannot commit.
-		preflightStarted := c.Now()
-		if err := c.requireCheckpointVerb(ctx); err != nil {
-			return nil, err
-		}
-		result.Timings.PreflightMs = stageMillis(c.Now().Sub(preflightStarted))
+	// Both commit paths write the measurement fields, and the fork path also
+	// needs a reader that accepts them. Fail before spending a summary call.
+	preflightStarted := c.Now()
+	if err := c.requireCheckpointFields(ctx); err != nil {
+		return nil, err
 	}
+	result.Timings.PreflightMs = stageMillis(c.Now().Sub(preflightStarted))
 
 	summary, err := c.summarizeForResult(ctx, plan, result)
 	if err != nil {
@@ -726,11 +725,11 @@ func (c *Compactor) Compact(ctx context.Context, sourcePath string) (result *Res
 	return result, err
 }
 
-// requireCheckpointVerb turns a Cake build without the checkpoint verb into a
-// clear failure. It never falls back to writing session JSONL.
-func (c *Compactor) requireCheckpointVerb(ctx context.Context) error {
+// requireCheckpointFields turns a Cake build without the measurement fields
+// into a clear failure. It never falls back to writing session JSONL.
+func (c *Compactor) requireCheckpointFields(ctx context.Context) error {
 	if c.CakeBin == "" {
-		return fmt.Errorf("in-place compaction requires a cake binary")
+		return fmt.Errorf("compaction requires a cake binary")
 	}
 	return cakecli.CheckpointAvailable(ctx, c.CakeBin)
 }
@@ -755,6 +754,8 @@ func (c *Compactor) appendInPlace(
 	if err != nil {
 		return nil, err
 	}
+	payload.SummaryUsage = result.SummaryUsage
+	payload.SummaryTimeMs = result.SummaryTimeMs
 
 	priorCheckpoints := 0
 	for _, record := range file.Records {
@@ -884,7 +885,7 @@ func (c *Compactor) writeFork(
 	if err != nil {
 		return nil, err
 	}
-	checkpoint, line, err := BuildCheckpoint(plan, summary, newID, file.LatestTaskID(), c.Now())
+	checkpoint, line, err := BuildCheckpoint(plan, summary, newID, file.LatestTaskID(), c.Now(), result.SummaryUsage, result.SummaryTimeMs)
 	if err != nil {
 		return nil, err
 	}
@@ -1017,8 +1018,9 @@ func (c *Compactor) summarizeForResult(ctx context.Context, plan *Plan, result *
 	started := c.Now()
 	summary, usage, transcriptChars, err := c.summarize(ctx, plan)
 	elapsed := c.Now().Sub(started)
-	result.SummaryTimeMs = elapsed.Milliseconds()
-	result.ensureTimings().SummaryMs = stageMillis(elapsed)
+	summaryMs := stageMillis(elapsed)
+	result.SummaryTimeMs = *summaryMs
+	result.ensureTimings().SummaryMs = summaryMs
 	usage.SummaryVisibleTokens = usage.VisibleTokens()
 	if usage != (cakecli.Usage{}) {
 		result.SummaryUsage = &usage
@@ -1061,9 +1063,26 @@ func (c *Compactor) summarize(ctx context.Context, plan *Plan) (summary string, 
 	return summary, usage, len(transcript), nil
 }
 
+// checkpointSummaryUsage converts the wrapper's flat provider measurement into
+// the checkpoint record's persisted shape. A nil measurement stays absent
+// rather than becoming a zero object.
+func checkpointSummaryUsage(usage *cakecli.Usage) *session.SummaryUsage {
+	if usage == nil {
+		return nil
+	}
+	return &session.SummaryUsage{
+		InputTokens:          usage.InputTokens,
+		CachedTokens:         usage.CachedTokens,
+		OutputTokens:         usage.OutputTokens,
+		ReasoningTokens:      usage.ReasoningTokens,
+		SummaryVisibleTokens: usage.SummaryVisibleTokens,
+		TotalTokens:          usage.TotalTokens,
+	}
+}
+
 // BuildCheckpoint renders the M1 compaction record. The returned bytes are the
 // exact framed JSONL record, including its trailing newline.
-func BuildCheckpoint(plan *Plan, summary, sessionID, taskID string, now time.Time) (*session.Checkpoint, []byte, error) {
+func BuildCheckpoint(plan *Plan, summary, sessionID, taskID string, now time.Time, summaryUsage *cakecli.Usage, summaryTimeMs int64) (*session.Checkpoint, []byte, error) {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
 		return nil, nil, fmt.Errorf("checkpoint summary is empty")
@@ -1114,6 +1133,8 @@ func BuildCheckpoint(plan *Plan, summary, sessionID, taskID string, now time.Tim
 			AfterTokens:  plan.RetainedTokens + session.EstimateTextTokens(summary),
 			Basis:        plan.Basis,
 		},
+		SummaryUsage:  checkpointSummaryUsage(summaryUsage),
+		SummaryTimeMs: summaryTimeMs,
 	}
 
 	line, err := json.Marshal(checkpoint)
