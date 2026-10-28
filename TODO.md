@@ -178,9 +178,9 @@ Recommended order:
    drop the annotations' facts.
 3. Build an evidence pack (all messages, Edit/Write args, commands) plus a
    deterministic exact-reference ledger; the model writes only the narrative.
-   Recommended next substantive path. Expected 10–18 s -> 6–10 s, 65–80% less
-   input, equal or better exact-fact coverage. Add `-transcript-out` on dry-run
-   so it can be inspected offline.
+   Recommended next substantive path; open as task `006` (P1/M). Expected
+   10–18 s -> 6–10 s, 65–80% less input, equal or better exact-fact coverage.
+   Add `-transcript-out` on dry-run so it can be inspected offline.
 4. Adaptive transcript budget: implemented; see "Adaptive transcript budget
    (done)". A higher default keep (50k–80k) and `-transcript-out` remain.
 5. Consider speculative summary during the turn only if the above still leaves

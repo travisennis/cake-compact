@@ -522,22 +522,24 @@ Still additive and free:
 ## Open decisions for Trav
 
 1. A1 was executed on 2026-10-28 and failed the latency/visible-output bar.
-   Authorize the next arm: a structural target/cap, or option B? Recommend B,
-   with a structural target, and pin the boundary before spending.
+   Option B, with a pinned boundary and an 800–1200 visible-token target, is
+   now tracked as cake-compact task `006`; the paid arm remains separately
+   spend-gated.
 2. Should `low` be the summarizer default, or stay opt-in? A1 shows it cuts
    latency but does not reach the bar; recommend keeping it opt-in until the
    next arm lands.
-3. Approve the narrative + deterministic-ledger summary shape for B? It changes
-   what a checkpoint summary looks like, but it should improve exact-fact
-   fidelity.
+3. Approve the narrative + deterministic-ledger summary shape for B? Task
+   `006` covers it; it changes what a checkpoint summary looks like, but it
+   should improve exact-fact fidelity.
 4. Should the reasoning transcript stay dropped? Recommend yes for now, stated
    explicitly, because including it would add 20–45% input and break the 800k
    cap on the Phase 5 prefixes.
 5. Should `run` default the summarizer to the turn's model/profile, or keep the
    separate `-summarizer-*` controls? Recommend keeping them separate for cost
    control.
-6. Add a boundary/pin or plan fingerprint to the next paid arm? Recommend yes;
-   A1's boundary moved 1.8–16.4% in input from Phase 5 at the same keep.
+6. Add a boundary/pin or plan fingerprint to the next paid arm? Task `006`
+   requires it; A1's boundary moved 1.8–16.4% in input from Phase 5 at the
+   same keep.
 
 ## Reproduction notes
 
