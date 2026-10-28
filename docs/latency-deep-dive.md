@@ -31,9 +31,12 @@ reasoning:
 
 Recommended order:
 
-1. **Low reasoning effort plus an output budget and a length target.** Expected
-   30–60 s → 10–18 s, with no visible-content change. Validate with a small
-   paid A/B against the existing Phase 5 annotation sheets.
+1. **Low reasoning effort first.** Expected 30–60 s → 10–18 s, with no
+   visible-content change. Validate with a small paid A/B against the existing
+   Phase 5 annotation sheets. Add an output budget or length target only if the
+   A/B shows visible summary length, not hidden reasoning, is the remaining
+   cost; the current 1.6–2.7k-token summaries have not been shown to be too
+   long.
 2. **Evidence pack plus a deterministic reference ledger.** Expected 10–18 s →
    6–10 s, 65–80% less summary input, and *better* exact-fact coverage because
    code carries paths, commits, commands, and error text verbatim.
@@ -236,7 +239,7 @@ as untrusted data, and should redact common secret patterns (`sk-`, `ghp_`,
 
 | # | Option | Expected latency | Input cost | Quality risk | Effort |
 | --- | --- | --- | --- | --- | --- |
-| A | Summarizer reasoning effort + output cap + length target | 30–60 s → 10–18 s | none | Low; A/B required | S |
+| A | Summarizer reasoning effort (output cap only if measured) | 30–60 s → 10–18 s | none | Low; A/B required | S |
 | B | Evidence pack + deterministic reference ledger | 10–18 s → 6–10 s (aggressive) | −65–80%; −40–65% with a raw excerpt | Medium; A/B required | M |
 | C | Prompt tightening alone | −15–25% | none | Medium; exact facts may drop | S |
 | D | Adaptive transcript budget / higher keep | −1–3 s; removes 800k failure | −10–25% | Low | S–M |
@@ -245,23 +248,30 @@ as untrusted data, and should redact common secret patterns (`sk-`, `ghp_`,
 | G | Core-native compaction | Removes wrapper, process, and cold prefill | Large | Long-term qualification | XL |
 | H | Micro-optimizations (preflight cache, direct HTTP) | <0.2 s | none | none | S |
 
-### A. Summarizer reasoning effort, output cap, length target
+### A. Summarizer reasoning effort; output cap only if measured
+
+The output cap and length target are conditional, not committed. The visible
+summaries are already 1.6–2.7k tokens; nothing yet shows that is too long. Test
+reasoning effort first, then add a cap only if the A/B shows visible output
+length is the remaining cost.
 
 Add:
 
 - `-summarizer-reasoning-effort` (pass `--reasoning-effort` to the summary
   child). Start with `low`; test `none` as a second arm. `--reasoning-budget`
   is an alternative if the provider honors it.
-- `-summary-max-tokens` (pass `--max-tokens`). Use ~4096 as a safety net, not
-  as the primary length control. Detect a token-limit termination instead of
-  silently accepting a truncated summary.
-- `-summary-target-tokens` (default ~1000) and a prompt instruction with a
-  structural budget, e.g. "At most 12 bullets, one line each, 25 words max;
-  target 800–1000 tokens; do not restate the historical summary."
+- If, and only if, the A/B shows visible output length is the remaining cost:
+  - `-summary-max-tokens` (pass `--max-tokens`). Use ~4096 as a safety net, not
+    as the primary length control. Detect a token-limit termination instead of
+    silently accepting a truncated summary.
+  - `-summary-target-tokens` (default ~1000) and a prompt instruction with a
+    structural budget, e.g. "At most 12 bullets, one line each, 25 words max;
+    target 800–1000 tokens; do not restate the historical summary."
 - A dedicated summary profile via `-summarizer-profile`: same fast model,
-  `reasoning_effort = "low"` or `"none"`, `max_output_tokens = 4096`, and a
-  lower temperature such as 0.2. Keep it separate from the turn model. Do not
-  switch to a different model without an A/B and explicit approval.
+  `reasoning_effort = "low"` or `"none"`, and a lower temperature such as 0.2.
+  Keep it separate from the turn model. Do not switch to a different model
+  without an A/B and explicit approval. An output cap belongs here only if the
+  A/B justifies one.
 - Capture `reasoning_tokens` and `cached_tokens` from the child's usage and
   report `summary_visible_tokens = output_tokens - reasoning_tokens`.
 
