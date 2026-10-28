@@ -755,6 +755,8 @@ func (c *Compactor) appendInPlace(
 	if err != nil {
 		return nil, err
 	}
+	payload.SummaryUsage = result.SummaryUsage
+	payload.SummaryTimeMs = result.SummaryTimeMs
 
 	priorCheckpoints := 0
 	for _, record := range file.Records {
@@ -884,7 +886,7 @@ func (c *Compactor) writeFork(
 	if err != nil {
 		return nil, err
 	}
-	checkpoint, line, err := BuildCheckpoint(plan, summary, newID, file.LatestTaskID(), c.Now())
+	checkpoint, line, err := BuildCheckpoint(plan, summary, newID, file.LatestTaskID(), c.Now(), result.SummaryUsage, result.SummaryTimeMs)
 	if err != nil {
 		return nil, err
 	}
@@ -1061,9 +1063,26 @@ func (c *Compactor) summarize(ctx context.Context, plan *Plan) (summary string, 
 	return summary, usage, len(transcript), nil
 }
 
+// checkpointSummaryUsage converts the wrapper's flat provider measurement into
+// the checkpoint record's persisted shape. A nil measurement stays absent
+// rather than becoming a zero object.
+func checkpointSummaryUsage(usage *cakecli.Usage) *session.SummaryUsage {
+	if usage == nil {
+		return nil
+	}
+	return &session.SummaryUsage{
+		InputTokens:          usage.InputTokens,
+		CachedTokens:         usage.CachedTokens,
+		OutputTokens:         usage.OutputTokens,
+		ReasoningTokens:      usage.ReasoningTokens,
+		SummaryVisibleTokens: usage.SummaryVisibleTokens,
+		TotalTokens:          usage.TotalTokens,
+	}
+}
+
 // BuildCheckpoint renders the M1 compaction record. The returned bytes are the
 // exact framed JSONL record, including its trailing newline.
-func BuildCheckpoint(plan *Plan, summary, sessionID, taskID string, now time.Time) (*session.Checkpoint, []byte, error) {
+func BuildCheckpoint(plan *Plan, summary, sessionID, taskID string, now time.Time, summaryUsage *cakecli.Usage, summaryTimeMs int64) (*session.Checkpoint, []byte, error) {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
 		return nil, nil, fmt.Errorf("checkpoint summary is empty")
@@ -1114,6 +1133,8 @@ func BuildCheckpoint(plan *Plan, summary, sessionID, taskID string, now time.Tim
 			AfterTokens:  plan.RetainedTokens + session.EstimateTextTokens(summary),
 			Basis:        plan.Basis,
 		},
+		SummaryUsage:  checkpointSummaryUsage(summaryUsage),
+		SummaryTimeMs: summaryTimeMs,
 	}
 
 	line, err := json.Marshal(checkpoint)

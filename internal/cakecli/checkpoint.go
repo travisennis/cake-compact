@@ -27,13 +27,17 @@ var ErrCheckpointUnavailable = errors.New("cake sessions checkpoint is unavailab
 //
 // Field names and the set of fields are the protocol: Cake rejects an unknown
 // field and any field the record envelope owns (type, checkpoint_version,
-// checkpoint_id, session_id, timestamp, boundary).
+// checkpoint_id, session_id, timestamp, boundary). SummaryUsage and
+// SummaryTimeMs are optional measurement fields; CheckpointAvailable checks
+// that the binary's help advertises them before a turn or summary is spent.
 type CheckpointPayload struct {
 	Trigger                   string             `json:"trigger"`
 	Summary                   string             `json:"summary"`
 	Retained                  []json.RawMessage  `json:"retained"`
 	EstimatedInput            CheckpointEstimate `json:"estimated_input"`
 	SummaryInstructionVersion int                `json:"summary_instruction_version"`
+	SummaryUsage              *Usage             `json:"summary_usage,omitempty"`
+	SummaryTimeMs             int64              `json:"summary_time_ms,omitempty"`
 	Model                     *CheckpointModel   `json:"model,omitempty"`
 	TaskID                    string             `json:"task_id,omitempty"`
 }
@@ -136,8 +140,8 @@ type checkpointDocument struct {
 }
 
 // CheckpointAvailable reports whether the Cake binary implements
-// `sessions checkpoint`. It asks for the subcommand help, which needs no
-// session, no payload, and no model.
+// `sessions checkpoint` with the optional measurement fields. It asks for the
+// subcommand help, which needs no session, no payload, and no model.
 func CheckpointAvailable(ctx context.Context, binary string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("cake sessions checkpoint check cancelled: %w", err)
@@ -152,6 +156,15 @@ func CheckpointAvailable(ctx context.Context, binary string) error {
 		}
 		detail := firstNonEmpty(stderr.String(), stdout.String(), err.Error())
 		return &VerbUnavailableError{Binary: binary, Detail: detail}
+	}
+	help := stdout.String()
+	for _, field := range []string{"summary_usage", "summary_time_ms"} {
+		if !strings.Contains(help, field) {
+			return &VerbUnavailableError{
+				Binary: binary,
+				Detail: fmt.Sprintf("the checkpoint verb does not accept %s; upgrade cake", field),
+			}
+		}
 	}
 	return nil
 }

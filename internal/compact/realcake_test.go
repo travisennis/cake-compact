@@ -225,6 +225,60 @@ func TestRealCakeInPlacePinsTheOwningRequest(t *testing.T) {
 	}
 }
 
+func TestRealCakePersistsSummaryUsage(t *testing.T) {
+	binary := realCakeBinary(t)
+	dataDir := t.TempDir()
+	sourcePath := writeFixture(t, dataDir)
+
+	payload := cakecli.CheckpointPayload{
+		Trigger:  "manual",
+		Summary:  "The earlier work is summarized.",
+		Retained: []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"the latest answer"}`)},
+		TaskID:   taskID,
+		EstimatedInput: cakecli.CheckpointEstimate{
+			BeforeTokens: 90000,
+			AfterTokens:  3000,
+			Basis:        "measured_usage",
+		},
+		SummaryInstructionVersion: 1,
+		SummaryUsage: &cakecli.Usage{
+			InputTokens:          1457,
+			CachedTokens:         0,
+			OutputTokens:         779,
+			ReasoningTokens:      291,
+			SummaryVisibleTokens: 488,
+			TotalTokens:          2236,
+		},
+		SummaryTimeMs: 6757,
+	}
+	if _, err := cakecli.Checkpoint(context.Background(), binary, dataDir, sourceID, payload); err != nil {
+		t.Fatalf("real cake rejected the measurement payload: %v", err)
+	}
+
+	file, err := session.Load(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointIndex := file.LatestCheckpointIndex()
+	if checkpointIndex < 0 {
+		t.Fatal("no checkpoint was persisted")
+	}
+	checkpoint := file.Records[checkpointIndex].Checkpoint
+	if checkpoint.SummaryUsage == nil || *checkpoint.SummaryUsage != (session.SummaryUsage{
+		InputTokens:          1457,
+		CachedTokens:         0,
+		OutputTokens:         779,
+		ReasoningTokens:      291,
+		SummaryVisibleTokens: 488,
+		TotalTokens:          2236,
+	}) {
+		t.Fatalf("persisted summary usage = %+v", checkpoint.SummaryUsage)
+	}
+	if checkpoint.SummaryTimeMs != 6757 {
+		t.Fatalf("persisted summary time = %d, want 6757", checkpoint.SummaryTimeMs)
+	}
+}
+
 func TestRealCakeRejectsInvalidPayloadWithoutWriting(t *testing.T) {
 	binary := realCakeBinary(t)
 	dataDir := t.TempDir()

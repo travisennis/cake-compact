@@ -5,7 +5,8 @@
 // and appends one checkpoint to the existing session through
 // `cake sessions checkpoint`. The session id stays stable and raw history
 // stays on disk. An explicit -fork flag keeps the older minimal-session writer
-// as an escape hatch. Nothing in Cake changes.
+// as an escape hatch. The wrapper never writes session JSONL itself; Cake owns
+// the append and now persists the summarizer measurement in the checkpoint.
 package main
 
 import (

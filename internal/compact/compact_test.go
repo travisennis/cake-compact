@@ -548,7 +548,7 @@ func TestBuildCheckpointShape(t *testing.T) {
 	if err != nil || !decision.Compact {
 		t.Fatalf("analyze: %v %+v", err, decision)
 	}
-	checkpoint, line, err := BuildCheckpoint(plan, "A compact summary.", newID, taskID, time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC))
+	checkpoint, line, err := BuildCheckpoint(plan, "A compact summary.", newID, taskID, time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC), nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,6 +579,51 @@ func TestBuildCheckpointShape(t *testing.T) {
 	}
 }
 
+func TestBuildCheckpointPersistsSummaryUsage(t *testing.T) {
+	file := loadFixture(t)
+	plan, decision, err := Analyze(file, Options{Force: true, KeepTokens: 10})
+	if err != nil || !decision.Compact {
+		t.Fatalf("analyze: %v %+v", err, decision)
+	}
+	usage := &cakecli.Usage{
+		InputTokens:          1457,
+		CachedTokens:         0,
+		OutputTokens:         779,
+		ReasoningTokens:      291,
+		SummaryVisibleTokens: 488,
+		TotalTokens:          2236,
+	}
+
+	checkpoint, line, err := BuildCheckpoint(plan, "A compact summary.", newID, taskID, time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC), usage, 6757)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.SummaryUsage == nil || *checkpoint.SummaryUsage != (session.SummaryUsage{
+		InputTokens:          1457,
+		CachedTokens:         0,
+		OutputTokens:         779,
+		ReasoningTokens:      291,
+		SummaryVisibleTokens: 488,
+		TotalTokens:          2236,
+	}) {
+		t.Fatalf("summary usage = %+v", checkpoint.SummaryUsage)
+	}
+	if checkpoint.SummaryTimeMs != 6757 {
+		t.Fatalf("summary time = %d, want 6757", checkpoint.SummaryTimeMs)
+	}
+
+	var decoded struct {
+		SummaryUsage  session.SummaryUsage `json:"summary_usage"`
+		SummaryTimeMs int64                `json:"summary_time_ms"`
+	}
+	if err := json.Unmarshal(line, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SummaryUsage != *checkpoint.SummaryUsage || decoded.SummaryTimeMs != 6757 {
+		t.Fatalf("persisted measurement = %+v / %d", decoded.SummaryUsage, decoded.SummaryTimeMs)
+	}
+}
+
 func TestBuildCheckpointRejectsOversizedRecord(t *testing.T) {
 	file := loadFixture(t)
 	plan := &Plan{
@@ -588,7 +633,7 @@ func TestBuildCheckpointRejectsOversizedRecord(t *testing.T) {
 		Basis:        "content_class",
 		Trigger:      "manual",
 	}
-	if _, _, err := BuildCheckpoint(plan, "summary", newID, taskID, time.Now()); err == nil {
+	if _, _, err := BuildCheckpoint(plan, "summary", newID, taskID, time.Now(), nil, 0); err == nil {
 		t.Fatal("an oversized checkpoint must be rejected")
 	}
 }
@@ -852,6 +897,29 @@ func TestCompactReportsSummaryUsageAndWallTime(t *testing.T) {
 	}
 	if result.SummaryTimeMs <= 0 {
 		t.Fatalf("summary time = %d, want a positive wall time", result.SummaryTimeMs)
+	}
+
+	persisted, err := session.Load(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointIndex := persisted.LatestCheckpointIndex()
+	if checkpointIndex < 0 {
+		t.Fatal("no checkpoint was persisted")
+	}
+	checkpoint := persisted.Records[checkpointIndex].Checkpoint
+	if checkpoint.SummaryUsage == nil || *checkpoint.SummaryUsage != (session.SummaryUsage{
+		InputTokens:          1200,
+		CachedTokens:         900,
+		OutputTokens:         300,
+		ReasoningTokens:      180,
+		SummaryVisibleTokens: 120,
+		TotalTokens:          1500,
+	}) {
+		t.Fatalf("persisted summary usage = %+v", checkpoint.SummaryUsage)
+	}
+	if checkpoint.SummaryTimeMs != result.SummaryTimeMs {
+		t.Fatalf("persisted summary time = %d, want %d", checkpoint.SummaryTimeMs, result.SummaryTimeMs)
 	}
 
 	raw, err := json.Marshal(result)

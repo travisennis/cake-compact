@@ -67,7 +67,7 @@ func fakeCakeMain(args []string) int {
 	}
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
-			fmt.Println("Append one context-compaction checkpoint to an existing session")
+			fmt.Println("Append one context-compaction checkpoint; summary_usage and summary_time_ms are accepted")
 			return 0
 		}
 	}
@@ -185,6 +185,8 @@ func appendFakeCheckpoint(sessionID string, payloadBytes []byte) int {
 			AfterTokens:  payload.EstimatedInput.AfterTokens,
 			Basis:        payload.EstimatedInput.Basis,
 		},
+		SummaryUsage:  checkpointSummaryUsage(payload.SummaryUsage),
+		SummaryTimeMs: payload.SummaryTimeMs,
 	}
 	line, err := json.Marshal(checkpoint)
 	if err != nil {
