@@ -305,6 +305,12 @@ such as result assembly. `inspect` reports only `total_ms`, `load_ms`, and
 `plan_ms`. A failure returns an error instead of a result document, so failed
 attempts have no timing object.
 
+The measured latency budget, the hidden-reasoning share, and the improvement
+options are analyzed in
+[`docs/latency-deep-dive.md`](docs/latency-deep-dive.md). In short: local work
+is 33–50 ms; the summary call is output-bound, so reasoning effort and summary
+length dominate the wall time.
+
 `run -json` prints:
 
 ```json

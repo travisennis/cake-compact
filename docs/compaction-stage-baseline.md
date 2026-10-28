@@ -139,3 +139,8 @@ transcript, or accepting a lower-quality summary. Those choices need explicit
 authorization; this task did not change the default model/profile. A future
 `run` will report `timings.summary_ms` directly and make the provider share
 visible without guessing.
+
+The follow-up deep dive ([`latency-deep-dive.md`](latency-deep-dive.md)) fits
+the summary stage on the Phase 5 data: wall time is output-token-bound, and
+hidden reasoning is the largest term. It records the options, expected impact,
+and the spend-gated A/B.

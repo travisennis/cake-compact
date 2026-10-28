@@ -119,6 +119,38 @@ no-op results report only load, plan, and total, and failed attempts return no
 timing document. `just ci`, `go test -race ./...`, and the real-Cake `test-cake`
 run pass without a model call.
 
+## Latency (open; spend-gated)
+
+Deep dive: `docs/latency-deep-dive.md` (2026-10-28, free analysis). The
+summary call is output-bound: Phase 5 fits `ms ≈ 0.023 × input + 6.06 ×
+output + 383` (R² = 0.96), ~165 output tokens/s. Visible summaries are 1.6–2.7k
+tokens, but the provider reports 5.6–8.3k output tokens; 54–70% of main-turn
+output is hidden reasoning, and the summarizer inherits the default model's
+`reasoning_effort = "max"`. Local load/plan/commit work is 33–50 ms. The
+transcript is 75–83% raw tool output; messages are under 4%. Default
+`-keep-tokens 20000` can exceed the 800k-character cap and fail after a turn
+was paid for.
+
+Recommended order:
+
+1. Add `-summarizer-reasoning-effort`, `-summary-max-tokens`, and a summary
+   length target; capture `reasoning_tokens` and `cached_tokens` in
+   `summary_usage`. Run a paid A/B on Phase 5 sessions (A1: three summaries,
+   ~0.5M input; no follow-up turns) and grade against the annotation sheets.
+   Expected 30–60 s -> 10–18 s.
+2. Build an evidence pack (all messages, Edit/Write args, commands) plus a
+   deterministic exact-reference ledger; the model writes only the narrative.
+   Expected 10–18 s -> 6–10 s, 65–80% less input, equal or better exact-fact
+   coverage. Add `-transcript-out` on dry-run so it can be inspected offline.
+3. Add an adaptive transcript budget or auto-raise keep-tokens so a long
+   session never hits the 800k cap after a paid turn.
+4. Consider speculative summary during the turn only if the above still leaves
+   more than ~15 s; core-native compaction is the long-term fix (cache reuse
+   and in-turn boundaries).
+
+Do not optimize the local stages, duplicate preflights, or cake startup; each
+is milliseconds against a 30–60 s summary call.
+
 ## Later
 
 - Add a small `-payload-out` or dry-run payload printer so other tools can
