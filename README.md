@@ -36,8 +36,11 @@ a turn whose compaction must then fail; pass `-no-compact` (turn only) or
 writing session JSONL.
 
 If `cake --help` does not list `--no-runtime-context`, the default summarizer
-fails with `cake --no-runtime-context is unavailable; upgrade cake`. A fixed
-`-summary-file` or `-summarizer-command` does not need the flag.
+fails with `cake --no-runtime-context is unavailable; upgrade cake`. `run`
+performs the same check before starting the turn when it will use the default
+summarizer, so an unsupported binary cannot spend a model call on a turn whose
+summary must then fail. A fixed `-summary-file` or `-summarizer-command` does
+not need the flag.
 
 A Cake build without checkpoint support cannot read a session that has received
 one. The raw records are unchanged, but the checkpoint record is unknown to it;
@@ -415,9 +418,9 @@ is reported as success; otherwise the source file is left byte-stable.
   interrupt.
 - Summarizer runtime context is covered offline: a fake child proves the
   default invocation passes `--no-runtime-context`; a binary whose `--help`
-  lacks the flag fails with the upgrade message before a second invocation; and
-  the prompt no longer contains a runtime-boundary instruction. No model call
-  is involved.
+  lacks the flag fails with the upgrade message before a second invocation and
+  makes `run` fail before the turn; and the prompt no longer contains a
+  runtime-boundary instruction. No model call is involved.
 - `CAKE_BIN=/path/to/cake just test-cake`: the generated checkpoint is accepted
   by real Cake; replay shows the raw transcript plus exactly one checkpoint
   (two after a second append), the source session id is unchanged, a pinned

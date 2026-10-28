@@ -477,6 +477,16 @@ func commandRun(args []string) int {
 		}
 	}
 
+	// The default summarizer also needs Cake's source-level runtime-context
+	// switch. Check it before the turn for the same reason as the verb above;
+	// fixed summary files and commands do not use it.
+	if !noCompact && !flags.dryRun && flags.summaryFile == "" && flags.summarizerCommand == "" {
+		if err := cakecli.NoRuntimeContextAvailable(signalCtx, binary); err != nil {
+			fmt.Fprintln(os.Stderr, "cake-compact:", err)
+			return 1
+		}
+	}
+
 	if statePath == "" && !noState {
 		statePath, err = state.DefaultPath(workingDir)
 		if err != nil {

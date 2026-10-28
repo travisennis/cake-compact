@@ -557,6 +557,68 @@ printf '{"session_id":"%s","result":"done"}'
 	}
 }
 
+func TestRunMissingRuntimeContextFlagFailsBeforeTurn(t *testing.T) {
+	dataDir, sourcePath := writeSessionFixture(t)
+	original, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "turn-ran")
+	t.Setenv("CAKE_COMPACT_TURN_MARKER", marker)
+	script := filepath.Join(t.TempDir(), "fake-cake")
+	body := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  *"sessions checkpoint --help"*) echo "Append a checkpoint"; exit 0 ;;
+  --help) echo "Usage: cake [OPTIONS]"; exit 0 ;;
+esac
+: > "$CAKE_COMPACT_TURN_MARKER"
+printf '{"session_id":"%s","result":"done"}'
+`, testSourceID)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := captureOutput(t, func() int {
+		return runCLI([]string{
+			"run",
+			"-cake-bin", script,
+			"-data-dir", dataDir,
+			"-no-state",
+			"-keep-tokens", "1",
+			"-force-compact",
+			"-json",
+			"hello",
+		})
+	})
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "cake --no-runtime-context is unavailable; upgrade cake") {
+		t.Fatalf("unclear failure: %s", stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("unexpected stdout: %s", stdout)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("the turn ran before the missing runtime-context flag was reported")
+	}
+
+	current, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(current, original) {
+		t.Fatal("a missing runtime-context flag modified the session")
+	}
+	entries, err := os.ReadDir(filepath.Join(dataDir, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("a missing runtime-context flag wrote a session: %d files", len(entries))
+	}
+}
+
 // The human surface names the summary's cost when the summarizer reported one;
 // the JSON document carries the same numbers for Phase 5.
 func TestPrintCompactionResultShowsSummaryUsage(t *testing.T) {

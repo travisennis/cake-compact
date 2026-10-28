@@ -91,8 +91,9 @@ it to the summarizer, and fails with
 `cake --no-runtime-context is unavailable; upgrade cake` when absent. The
 runtime-boundary prompt and the summary scanner are removed;
 `summary_instruction_version` is 3. Tests cover the flag being passed, the
-missing-flag failure, and the prompt. `just ci`, `go test -race ./...`, and the
-real-Cake `test-cake` build pass without a model call.
+missing-flag failure, the `run` preflight, and the prompt. `just ci`,
+`go test -race ./...`, and the real-Cake `test-cake` build pass without a model
+call.
 
 ## Stage timing (done)
 
