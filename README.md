@@ -165,6 +165,66 @@ no model call and does not change the default model or profile.
 `inspect -json` reports `anchor_item` and `pinned_request`, so the request that
 would be preserved (or the absence of one) is visible before a compaction.
 
+### Inspect tree
+
+`inspect -tree` is a read-only view of the same plan, with no model call. It
+prints every raw record first, then the effective provider context split into
+the retirement boundary:
+
+```text
+RAW FILE
+  8 records: 5 conversation, 3 metadata, 0 checkpoints
+  line  1  session_meta         session aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+  line  2  task_start           task bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+  line  3  message              USER first request
+  line  4  reasoning            think about it
+  line  5  message              ASSISTANT first answer
+  line  6  message              USER second request
+  line  7  message              ASSISTANT second answer
+  line  8  turn_usage           input 90000 tokens, window 100000
+
+EFFECTIVE CONTEXT (what the next model call sees)
+  no checkpoint; raw conversation only
+
+  --- RETIRED PREFIX (becomes the summary transcript) ---
+   0  USER               first request                                                   4 tok  retire
+   1  reasoning          think about it                                                  4 tok  retire
+   2  ASSISTANT          first answer                                                    3 tok  retire
+      3 items, 12 estimated tokens
+
+  --- RETAINED TAIL (copied into the checkpoint) ---
+   3  USER               second request                                                  4 tok  PIN user_input
+   4  ASSISTANT          second answer                                                   4 tok  keep
+      2 items, 8 estimated tokens
+
+  3 retired + 1 summary -> new prefix
+  2 retained records stay in the checkpoint
+
+  estimated input: 90000 tokens (measured_usage)
+  window: 100000 tokens; threshold: 80000 tokens; keep target: 1 token
+  would compact: yes
+```
+
+The first table shows the raw file, including metadata records that are not
+provider-visible. `line` is the record's 1-based line number. The second table
+shows the projected context: without a checkpoint, the raw conversation; with
+one, the synthetic historical summary, the checkpoint's retained tail, and any
+records appended after it. The `#` column is the item's index in that projected
+list, so the pinned request keeps the index it had before the split.
+
+`retire` items become the summary transcript. `keep` items are copied into the
+checkpoint. `PIN user_input` marks a retained record that carries a
+`user_input` pin: the owning request copied from before the boundary, or a pin
+preserved from an earlier checkpoint. That request stays exact even when the
+older work inside it is summarized. Token counts use the planner's
+content-class estimate (4 characters per token, 25% safety margin, 1,000 tokens
+per image); they are the same numbers `inspect` reports, not provider
+measurements. Reasoning counts both provider fields, `summary` and `content`,
+plus any encrypted payload.
+
+`-tree` and `-json` are mutually exclusive. The raw listing can be long on a
+real session; pipe it to `less` when you only need the effective-context half.
+
 ### In place vs fork
 
 | | In place (default) | `-fork` |
@@ -218,6 +278,9 @@ cake-compact run "now change the timeout to 60 seconds"
 
 # See the measurement and the planned retirement boundary.
 cake-compact inspect <session-uuid>
+
+# See every raw record and the projected prefix/retained split.
+cake-compact inspect -tree <session-uuid>
 
 # Compact now, without running a turn.
 cake-compact compact <session-uuid>

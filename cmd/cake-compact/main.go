@@ -28,6 +28,7 @@ import (
 	"github.com/travisennis/cake-compact/internal/compact"
 	"github.com/travisennis/cake-compact/internal/session"
 	"github.com/travisennis/cake-compact/internal/state"
+	"github.com/travisennis/cake-compact/internal/tree"
 )
 
 func main() {
@@ -102,6 +103,7 @@ Usage:
   cake-compact run [flags] <prompt...>     run one cake turn, compacting when over threshold
   cake-compact compact [flags] <session>   compact an existing session in place
   cake-compact inspect [flags] <session>   show the context measurement and compaction plan
+                                           (-tree: raw records and effective context)
   cake-compact version                     print version, revision, and commit time
 
 The session argument is a UUID (resolved under the cake sessions directory) or a
@@ -146,9 +148,13 @@ Run-only flags:
   -no-compact                 run the turn without considering compaction
   -force-compact              compact after the turn regardless of threshold
 
+Inspect-only flags:
+  -tree                       show the raw records and effective-context tree
+
 Examples:
   cake-compact run "fix the failing test"
   cake-compact inspect 0d8f6a1e-...
+  cake-compact inspect -tree 0d8f6a1e-...
   cake-compact compact -dry-run 0d8f6a1e-...
   cake-compact compact -summary-file notes.txt 0d8f6a1e-...
   cake-compact compact -force -keep-tokens 12000 0d8f6a1e-...
@@ -311,11 +317,16 @@ func commandInspect(args []string) int {
 	fs.SetOutput(os.Stderr)
 	var flags commonFlags
 	flags.register(fs)
+	treeView := fs.Bool("tree", false, "show raw records and the effective-context tree")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "inspect requires one session UUID or path")
+		return 2
+	}
+	if *treeView && flags.jsonOut {
+		fmt.Fprintln(os.Stderr, "inspect: -tree cannot be combined with -json")
 		return 2
 	}
 
@@ -369,6 +380,13 @@ func commandInspect(args []string) int {
 	}
 	if flags.verbose {
 		logTimings(result.Timings)
+	}
+	if *treeView {
+		if err := tree.Render(os.Stdout, tree.View{File: file, Plan: plan, Decision: decision}); err != nil {
+			fmt.Fprintln(os.Stderr, "cake-compact:", err)
+			return 1
+		}
+		return 0
 	}
 	if flags.jsonOut {
 		return writeJSON(result)

@@ -221,6 +221,62 @@ func TestInspectVerbosePrintsTimings(t *testing.T) {
 	}
 }
 
+func TestInspectTreePrintsTheRetirementSplit(t *testing.T) {
+	dataDir, _ := writeSessionFixture(t)
+	code, stdout, stderr := captureOutput(t, func() int {
+		return runCLI([]string{
+			"inspect",
+			"-tree",
+			"-data-dir", dataDir,
+			"-keep-tokens", "1",
+			testSourceID,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	for _, want := range []string{
+		"RAW FILE",
+		"7 records: 4 conversation, 3 metadata, 0 checkpoints",
+		"EFFECTIVE CONTEXT",
+		"no checkpoint; raw conversation only",
+		"RETIRED PREFIX",
+		"RETAINED TAIL",
+		"second request",
+		"PIN user_input",
+		"would compact: yes",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("tree output does not contain %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, `"session_id"`) {
+		t.Fatalf("tree output should be text, not JSON:\n%s", stdout)
+	}
+}
+
+func TestInspectTreeRejectsJSON(t *testing.T) {
+	dataDir, _ := writeSessionFixture(t)
+	code, stdout, stderr := captureOutput(t, func() int {
+		return runCLI([]string{
+			"inspect",
+			"-tree",
+			"-json",
+			"-data-dir", dataDir,
+			testSourceID,
+		})
+	})
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "-tree cannot be combined with -json") {
+		t.Fatalf("stderr = %q, want a flag conflict", stderr)
+	}
+}
+
 func TestRunCompactsInPlaceAndKeepsTheSession(t *testing.T) {
 	dataDir, sourcePath := writeSessionFixture(t)
 	original, err := os.ReadFile(sourcePath)
