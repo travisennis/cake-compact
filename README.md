@@ -450,9 +450,10 @@ is reported as success; otherwise the source file is left byte-stable.
   no nonempty prefix, it refuses compaction before the model call rather than
   truncating content.
 - The transcript includes reasoning only when the provider supplied a `summary`
-  array. Sessions that carry readable reasoning in `content`
-  (`reasoning_text`) are currently omitted; no test pins that choice. See
-  [docs/latency-deep-dive.md](docs/latency-deep-dive.md#reasoning-is-currently-dropped).
+  array. Content-only reasoning records (`reasoning_text` without a summary)
+  render zero reasoning characters; summary-backed records render their
+  summary. No test pins that choice. See
+  [docs/latency-deep-dive.md](docs/latency-deep-dive.md#content-shaped-reasoning-is-currently-dropped).
 - The summarizer is an LLM reading untrusted transcript content. Prompt
   injection, factual fidelity, and summary quality are not fully evaluated;
   A1 covered three Phase 5 sessions and the synthetic injection fixture, not

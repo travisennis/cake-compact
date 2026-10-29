@@ -149,14 +149,15 @@ Illustrative targets, using the same model:
 
 ## What the summarizer actually reads
 
-### Reasoning is currently dropped
+### Content-shaped reasoning is currently dropped
 
 `BuildTranscript` currently renders messages, function calls, and function
 outputs. It caps each tool call at 4,000 characters, each tool output at 6,000,
-and each reasoning item at 4,000. The reasoning branch is effectively dead:
-`Reasoning.Text()` reads the `summary` field, but current session records put
-the text in `content`. Every analyzed prefix shows `reasoning items > 0,
-rendered chars = 0`.
+and each reasoning item at 4,000. It reads `Reasoning.Text()`, which returns only
+the `summary` field. Content-only records, where current sessions put reasoning
+in `content` (`reasoning_text`), render zero reasoning characters;
+summary-backed records render their summary. Every analyzed prefix with
+content-only reasoning shows `reasoning items > 0, rendered chars = 0`.
 
 Exact composition of the prefix actually sent to the model:
 
