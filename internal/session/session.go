@@ -541,13 +541,25 @@ func (item Item) IsUserMessage() bool {
 // Text returns reasoning summary text, preferring typed objects and falling
 // back to historical plain strings.
 func (reasoning *Reasoning) Text() string {
-	if len(reasoning.Summary) == 0 {
+	return reasoningEntries(reasoning.Summary)
+}
+
+// ContentText returns readable reasoning content. Cake currently writes typed
+// entries ([{"type":"reasoning_text","text":"..."}]); older sessions may
+// carry plain strings. Text stays summary-only because the summary transcript
+// uses it to decide whether reasoning is included.
+func (reasoning *Reasoning) ContentText() string {
+	return reasoningEntries(reasoning.Content)
+}
+
+func reasoningEntries(raw json.RawMessage) string {
+	if len(raw) == 0 {
 		return ""
 	}
 	var typed []struct {
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal(reasoning.Summary, &typed); err == nil {
+	if err := json.Unmarshal(raw, &typed); err == nil {
 		parts := make([]string, 0, len(typed))
 		for _, entry := range typed {
 			if entry.Text != "" {
@@ -557,7 +569,7 @@ func (reasoning *Reasoning) Text() string {
 		return strings.Join(parts, "\n")
 	}
 	var plain []string
-	if err := json.Unmarshal(reasoning.Summary, &plain); err == nil {
+	if err := json.Unmarshal(raw, &plain); err == nil {
 		return strings.Join(plain, "\n")
 	}
 	return ""
@@ -582,7 +594,7 @@ func EstimateTokens(items []Item) uint64 {
 			chars += float64(len(item.Message.Content))
 			images += len(item.Message.Images)
 		case item.Reasoning != nil:
-			chars += float64(len(item.Reasoning.Text()) + len(item.Reasoning.EncryptedContent))
+			chars += float64(len(item.Reasoning.Text()) + len(item.Reasoning.ContentText()) + len(item.Reasoning.EncryptedContent))
 		case item.Call != nil:
 			chars += float64(len(item.Call.Name) + len(item.Call.Arguments))
 		case item.Output != nil:

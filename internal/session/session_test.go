@@ -135,3 +135,57 @@ func TestReasoningTextHandlesTypedAndPlainSummaries(t *testing.T) {
 		t.Fatalf("plain reasoning text = %q", text)
 	}
 }
+
+func TestReasoningContentTextHandlesTypedAndPlainEntries(t *testing.T) {
+	typed := &Reasoning{Content: []byte(`[{"type":"reasoning_text","text":"first"},{"type":"reasoning_text","text":"second"}]`)}
+	if text := typed.ContentText(); text != "first\nsecond" {
+		t.Fatalf("typed reasoning content = %q", text)
+	}
+	plain := &Reasoning{Content: []byte(`["one","two"]`)}
+	if text := plain.ContentText(); text != "one\ntwo" {
+		t.Fatalf("plain reasoning content = %q", text)
+	}
+}
+
+func TestEstimateTokensCountsReasoningText(t *testing.T) {
+	const totalChars = 400
+	const wantTokens = 125 // 400/4*1.25
+	text := strings.Repeat("x", totalChars)
+	typedText := func(kind, text string) []byte {
+		return []byte(`[{"type":"` + kind + `","text":"` + text + `"}]`)
+	}
+	cases := []struct {
+		name      string
+		reasoning *Reasoning
+	}{
+		{
+			name:      "content",
+			reasoning: &Reasoning{Content: typedText("reasoning_text", text)},
+		},
+		{
+			name:      "summary",
+			reasoning: &Reasoning{Summary: typedText("summary_text", text)},
+		},
+		{
+			name: "summary and content",
+			reasoning: &Reasoning{
+				Summary: typedText("summary_text", strings.Repeat("s", 100)),
+				Content: typedText("reasoning_text", strings.Repeat("c", 300)),
+			},
+		},
+		{
+			name: "content and encrypted content",
+			reasoning: &Reasoning{
+				Content:          typedText("reasoning_text", strings.Repeat("c", 300)),
+				EncryptedContent: strings.Repeat("e", 100),
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := EstimateItemTokens(Item{Reasoning: testCase.reasoning}); got != wantTokens {
+				t.Fatalf("estimate = %d, want %d", got, wantTokens)
+			}
+		})
+	}
+}
