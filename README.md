@@ -245,6 +245,7 @@ transcript because it re-emits stored records verbatim.
 ## Build
 
 ```sh
+just hooks          # install the commit-msg hook (Conventional Commits)
 just build          # bin/cake-compact
 just install        # go install ./cmd/cake-compact
 just test
