@@ -172,18 +172,16 @@ Recommended order:
    injection passed. A1 failed; A2 was not run. Visible summary length is now
    the bottleneck. Details:
    `../research/context-compaction-a1-results.md`.
-2. Add a structural summary target (800–1200 visible tokens) and a bounded
-   `-summary-max-tokens` safety net, rejecting length-stopped output. This is
-   the smallest next change, but validate exact-fact retention; a blunt cap can
-   drop the annotations' facts.
-3. Build an evidence pack (all messages, Edit/Write args, commands) plus a
-   deterministic exact-reference ledger; the model writes only the narrative.
-   Recommended next substantive path; open as task `006` (P1/M). Expected
-   10–18 s -> 6–10 s, 65–80% less input, equal or better exact-fact coverage.
-   Add `-transcript-out` on dry-run so it can be inspected offline.
-4. Adaptive transcript budget: implemented; see "Adaptive transcript budget
+2. Structural summary target plus evidence pack (`006`): implemented offline
+   through `f3fd1ab` and rejected 2026-11-21. Default `evidence` input was
+   12–42% larger than `raw` because raw already caps arguments at 4k and
+   results at 6k; `evidence-rawless` was 33–72% smaller but dropped every tool
+   result, and the ledger was noisy (35/79 path entries fragmented; some
+   commits missed). The branch and worktree were deleted; `raw` remains the
+   only input. Do not redo as-is.
+3. Adaptive transcript budget: implemented; see "Adaptive transcript budget
    (done)". A higher default keep (50k–80k) and `-transcript-out` remain.
-5. Consider speculative summary during the turn only if the above still leaves
+4. Consider speculative summary during the turn only if the above still leaves
    more than ~15 s; core-native compaction is the long-term fix (cache reuse
    and in-turn boundaries).
 

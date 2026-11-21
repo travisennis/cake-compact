@@ -40,9 +40,13 @@ Recommended order:
    16.7–33.5 s, so it failed the A1 bar. Visible length is now the remaining
    cost. Add a structural target and bounded output cap, or go directly to
    option B.
-2. **Evidence pack plus a deterministic reference ledger.** Expected 10–18 s →
-   6–10 s, 65–80% less summary input, and *better* exact-fact coverage because
-   code carries paths, commits, commands, and error text verbatim.
+2. **Evidence pack plus a deterministic reference ledger (tried as task `006`;
+   rejected 2026-11-21).** Expected 10–18 s → 6–10 s, 65–80% less summary
+   input, and *better* exact-fact coverage because code carries paths, commits,
+   commands, and error text verbatim. Implemented through `f3fd1ab`, then
+   rejected: default `evidence` input was 12–42% larger than `raw` (raw already
+   caps tool output), `evidence-rawless` dropped every tool result, and the
+   ledger was noisy. Branch and worktree deleted.
 3. Treat speculative summaries and core-native compaction as later options.
 
 ## A1 low-reasoning result (2026-10-28)
@@ -317,6 +321,10 @@ that is 25–40 s saved per compaction. Input unchanged.
 
 ### B. Evidence pack + deterministic reference ledger
 
+Rejected 2026-11-21 after an offline trial as cake-compact task `006` (branch
+and worktree deleted); `raw` remains the only input. The design below is kept
+as the record of what was tried.
+
 Instead of sending the raw transcript, build a compact evidence pack:
 
 1. **Messages**: every real user and assistant message, verbatim (they are
@@ -523,15 +531,14 @@ Still additive and free:
 ## Open decisions for Trav
 
 1. A1 was executed on 2026-10-28 and failed the latency/visible-output bar.
-   Option B, with a pinned boundary and an 800–1200 visible-token target, is
-   now tracked as cake-compact task `006`; the paid arm remains separately
-   spend-gated.
+   Option B, with a pinned boundary and an 800–1200 visible-token target, was
+   tracked as cake-compact task `006` and rejected 2026-11-21; the paid arm
+   never ran.
 2. Should `low` be the summarizer default, or stay opt-in? A1 shows it cuts
    latency but does not reach the bar; recommend keeping it opt-in until the
    next arm lands.
-3. Approve the narrative + deterministic-ledger summary shape for B? Task
-   `006` covers it; it changes what a checkpoint summary looks like, but it
-   should improve exact-fact fidelity.
+3. The narrative + deterministic-ledger summary shape for B was tried in task
+   `006` and rejected; `raw` was smaller and the ledger was noisy.
 4. Should the reasoning transcript stay dropped? Recommend yes for now, stated
    explicitly, because including it would add 20–45% input and break the 800k
    cap on the Phase 5 prefixes.
