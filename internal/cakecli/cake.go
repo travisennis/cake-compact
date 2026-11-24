@@ -304,8 +304,10 @@ func NoRuntimeContextAvailable(ctx context.Context, binary string) error {
 // transcript. The invocation omits Cake's process-environment Developer
 // message, so the summary cannot treat the summarizer's cwd, date, platform,
 // shell, or terminal as session content. The child runs in a temporary
-// directory with a temporary data root so the summary call cannot pollute the
-// user's sessions or telemetry.
+// directory with a temporary data root and a temporary Cake config root that
+// contains only the global settings.toml, so the summary call cannot pollute
+// the user's sessions or telemetry and does not load global hooks, MCP
+// servers, skills, or toolbox tools.
 // The returned usage is that invocation's own provider usage; a response whose
 // usage is absent or unparseable leaves it zero rather than failing a summary
 // that otherwise succeeded.
@@ -326,6 +328,10 @@ func Summarize(ctx context.Context, options SummaryOptions) (string, Usage, erro
 	}
 	dataDir := filepath.Join(tempDir, "data")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return "", usage, err
+	}
+	configRoot, err := isolatedConfigDir(tempDir)
+	if err != nil {
 		return "", usage, err
 	}
 
@@ -350,7 +356,10 @@ func Summarize(ctx context.Context, options SummaryOptions) (string, Usage, erro
 
 	cmd := exec.CommandContext(ctx, options.Binary, args...)
 	cmd.Dir = tempDir
-	cmd.Env = environmentWith("CAKE_DATA_DIR", dataDir)
+	cmd.Env = environmentWith(
+		"CAKE_DATA_DIR", dataDir,
+		"XDG_CONFIG_HOME", configRoot,
+	)
 	cmd.Stdin = strings.NewReader(options.Transcript)
 
 	var stdout, stderr bytes.Buffer
@@ -382,17 +391,60 @@ func Summarize(ctx context.Context, options SummaryOptions) (string, Usage, erro
 	return summary, usage, nil
 }
 
-// environmentWith returns the process environment with key set to value,
-// removing duplicate assignments so the child sees the intended value first.
-func environmentWith(key, value string) []string {
-	env := os.Environ()
-	filtered := make([]string, 0, len(env)+1)
-	prefix := key + "="
-	for _, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			continue
-		}
-		filtered = append(filtered, entry)
+// isolatedConfigDir creates a temporary Cake config root with a copy of the
+// user's global settings.toml. The summary call needs model and profile
+// definitions, but it must not load global hooks, MCP servers, skills, or
+// toolbox tools. The legacy ~/.cake/AGENTS.md is outside the XDG root and is
+// not covered by this isolation.
+func isolatedConfigDir(tempDir string) (string, error) {
+	root := filepath.Join(tempDir, "config")
+	cakeDir := filepath.Join(root, "cake")
+	if err := os.MkdirAll(cakeDir, 0o700); err != nil {
+		return "", fmt.Errorf("create isolated Cake config directory: %w", err)
 	}
-	return append(filtered, prefix+value)
+
+	sourceRoot := os.Getenv("XDG_CONFIG_HOME")
+	if sourceRoot == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot locate the home directory: %w", err)
+		}
+		sourceRoot = filepath.Join(home, ".config")
+	}
+	source := filepath.Join(sourceRoot, "cake", "settings.toml")
+	settings, err := os.ReadFile(source)
+	if errors.Is(err, os.ErrNotExist) {
+		return root, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read Cake settings %q: %w", source, err)
+	}
+	path := filepath.Join(cakeDir, "settings.toml")
+	if err := os.WriteFile(path, settings, 0o600); err != nil {
+		return "", fmt.Errorf("write isolated Cake settings: %w", err)
+	}
+	return root, nil
+}
+
+// environmentWith returns the process environment with the supplied key/value
+// pairs replaced, so the child sees the intended values.
+func environmentWith(keyValues ...string) []string {
+	env := os.Environ()
+	filtered := make([]string, 0, len(env)+len(keyValues)/2)
+	for _, entry := range env {
+		skip := false
+		for i := 0; i+1 < len(keyValues); i += 2 {
+			if strings.HasPrefix(entry, keyValues[i]+"=") {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			filtered = append(filtered, entry)
+		}
+	}
+	for i := 0; i+1 < len(keyValues); i += 2 {
+		filtered = append(filtered, keyValues[i]+"="+keyValues[i+1])
+	}
+	return filtered
 }

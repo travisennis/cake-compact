@@ -81,12 +81,13 @@ keep a checkpoint-aware binary for compacted sessions.
    before_tokens`, and a 0/0 estimate is never sent.
 6. It summarizes the retired prefix. The default summarizer is a Cake
    invocation with `--no-session --no-tools --no-skills --no-runtime-context`,
-   run in a temporary directory with a temporary data root; its provider usage
-   and wall time are reported in the result document for cost measurement.
-   `--no-runtime-context` omits the process-environment Developer message, so
-   the summary cannot present the summarizer's own cwd, date, or host as
-   session content. `-summary-file` and `-summarizer-command` replace the model
-   call and report no usage.
+   run in a temporary directory with a temporary data root and a temporary
+   Cake config root containing only a copy of the global `settings.toml`; its
+   provider usage and wall time are reported in the result document for cost
+   measurement. `--no-runtime-context` omits the process-environment Developer
+   message, so the summary cannot present the summarizer's own cwd, date, or
+   host as session content. `-summary-file` and `-summarizer-command` replace
+   the model call and report no usage.
 7. **In place (default):** it pipes one JSON payload to
    `cake sessions checkpoint <UUID> --json` on stdin. Cake owns the envelope,
    checkpoint id, session id, timestamp, boundary, exclusive append lock,
@@ -528,10 +529,11 @@ is reported as success; otherwise the source file is left byte-stable.
   `-summarizer-reasoning-effort low` cuts hidden reasoning but not visible
   summary length; use it while experimenting, but do not treat it as a latency
   fix.
-- The default summarizer uses user-level settings, not the project's
-  `.cake/settings.toml`: it runs in a temporary directory so project hooks,
-  AGENTS.md, skills, and tools cannot affect the summary. Pass
-  `-summarizer-model`, `-summarizer-profile`, or
+- The default summarizer uses a temporary Cake config root containing only a
+  copy of the global `settings.toml`, and runs in a temporary project
+  directory. Project and global hooks, MCP servers, skills, and toolbox tools
+  do not load. The legacy `~/.cake/AGENTS.md` is outside the XDG root and is
+  still read if present. Pass `-summarizer-model`, `-summarizer-profile`, or
   `-summarizer-reasoning-effort` to choose the model and reasoning settings.
 - The fork escape hatch writes a new session containing only metadata and the
   checkpoint; the source remains the raw audit record. It is mainly useful for
@@ -547,8 +549,8 @@ is reported as success; otherwise the source file is left byte-stable.
   session id, a second append selecting the newest checkpoint, rejected
   payloads and locked sessions leaving the file byte-stable, missing-verb
   detection with no fallback, the subprocess payload shape, summarizer
-  cancellation, and recognition of an append that completed before an
-  interrupt.
+  cancellation, summarizer config isolation, and recognition of an append
+  that completed before an interrupt.
 - `cake-compact version` reads `runtime/debug.ReadBuildInfo` and prints the
   embedded `vcs.revision` and `vcs.time`, with `(modified)` for a dirty build;
   table tests cover present, modified, and absent metadata. No model call.

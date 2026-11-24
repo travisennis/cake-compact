@@ -47,6 +47,35 @@ func TestEnvironmentWithReplacesExistingValue(t *testing.T) {
 	}
 }
 
+func TestEnvironmentWithReplacesMultipleValues(t *testing.T) {
+	t.Setenv("CAKE_DATA_DIR", "/old-data")
+	t.Setenv("XDG_CONFIG_HOME", "/old-config")
+	env := environmentWith(
+		"CAKE_DATA_DIR", "/new-data",
+		"XDG_CONFIG_HOME", "/new-config",
+	)
+	values := map[string]string{}
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if key != "CAKE_DATA_DIR" && key != "XDG_CONFIG_HOME" {
+			continue
+		}
+		if _, seen := values[key]; seen {
+			t.Fatalf("duplicate %s entry in environment", key)
+		}
+		values[key] = value
+	}
+	if values["CAKE_DATA_DIR"] != "/new-data" {
+		t.Fatalf("CAKE_DATA_DIR = %q", values["CAKE_DATA_DIR"])
+	}
+	if values["XDG_CONFIG_HOME"] != "/new-config" {
+		t.Fatalf("XDG_CONFIG_HOME = %q", values["XDG_CONFIG_HOME"])
+	}
+}
+
 func TestResolveDataDirAndBinary(t *testing.T) {
 	t.Setenv("CAKE_DATA_DIR", "/tmp/cake-data")
 	dir, err := ResolveDataDir("")
@@ -103,6 +132,163 @@ func TestRunTurnReportsExitCode(t *testing.T) {
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3", code)
 	}
+}
+
+func TestIsolatedConfigDirCopiesOnlySettings(t *testing.T) {
+	sourceRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", sourceRoot)
+	sourceCake := filepath.Join(sourceRoot, "cake")
+	if err := os.MkdirAll(filepath.Join(sourceCake, "skills", "demo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := "default_model = \"test-model\"\n"
+	if err := os.WriteFile(filepath.Join(sourceCake, "settings.toml"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"hooks.json", "mcp.json", "AGENTS.md"} {
+		if err := os.WriteFile(filepath.Join(sourceCake, name), []byte("do not copy"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sourceCake, "skills", "demo", "SKILL.md"), []byte("do not copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tempDir := t.TempDir()
+	root, err := isolatedConfigDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != filepath.Join(tempDir, "config") {
+		t.Fatalf("config root = %q", root)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "cake", "settings.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != settings {
+		t.Fatalf("settings = %q, want %q", got, settings)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "cake"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "settings.toml" {
+		t.Fatalf("isolated config has unexpected entries: %v", entries)
+	}
+}
+
+func TestIsolatedConfigDirWithoutSettings(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root, err := isolatedConfigDir(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "cake", "settings.toml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("settings file should be absent: %v", err)
+	}
+}
+
+func TestIsolatedConfigDirUsesHomeFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", home)
+	sourceCake := filepath.Join(home, ".config", "cake")
+	if err := os.MkdirAll(sourceCake, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := "default_model = \"home-model\"\n"
+	if err := os.WriteFile(filepath.Join(sourceCake, "settings.toml"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := isolatedConfigDir(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "cake", "settings.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != settings {
+		t.Fatalf("settings = %q, want %q", got, settings)
+	}
+}
+
+func TestSummarizeIsolatesGlobalConfig(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("sh is unavailable")
+	}
+	sourceRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", sourceRoot)
+	t.Setenv("CAKE_DATA_DIR", "/parent-data")
+	sourceCake := filepath.Join(sourceRoot, "cake")
+	if err := os.MkdirAll(sourceCake, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settings := "default_model = \"test-model\"\n"
+	if err := os.WriteFile(filepath.Join(sourceCake, "settings.toml"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"hooks.json", "mcp.json"} {
+		if err := os.WriteFile(filepath.Join(sourceCake, name), []byte("do not load"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	capture := t.TempDir()
+	configPath := filepath.Join(capture, "config-path")
+	dataPath := filepath.Join(capture, "data-path")
+	listingPath := filepath.Join(capture, "listing")
+	capturedSettingsPath := filepath.Join(capture, "settings")
+	script := writeScript(t, `printf '%s' "$XDG_CONFIG_HOME" > `+shellQuote(configPath)+`
+printf '%s' "$CAKE_DATA_DIR" > `+shellQuote(dataPath)+`
+ls -1 "$XDG_CONFIG_HOME/cake" > `+shellQuote(listingPath)+`
+cat "$XDG_CONFIG_HOME/cake/settings.toml" > `+shellQuote(capturedSettingsPath)+`
+cat >/dev/null
+printf '{"result":"the summary"}'
+`)
+	summary, _, err := Summarize(context.Background(), SummaryOptions{
+		Binary:       script,
+		SystemPrompt: "summarize",
+		Transcript:   "USER:\nhello",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary != "the summary" {
+		t.Fatalf("summary = %q", summary)
+	}
+
+	childConfig := strings.TrimSpace(readFile(t, configPath))
+	if childConfig == sourceRoot {
+		t.Fatalf("summarizer inherited the global config root")
+	}
+	if !strings.Contains(childConfig, "cake-compact-summary-") {
+		t.Fatalf("config root is not under the temporary directory: %q", childConfig)
+	}
+	if childData := strings.TrimSpace(readFile(t, dataPath)); childData == "/parent-data" {
+		t.Fatalf("summarizer inherited the parent data root")
+	}
+	if listing := strings.TrimSpace(readFile(t, listingPath)); listing != "settings.toml" {
+		t.Fatalf("isolated config contains %q, want only settings.toml", listing)
+	}
+	if got := readFile(t, capturedSettingsPath); got != settings {
+		t.Fatalf("isolated settings = %q, want %q", got, settings)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func TestSummarizeUsesStdinAndParsesResult(t *testing.T) {

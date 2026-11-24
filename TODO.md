@@ -113,6 +113,23 @@ missing-flag failure, the `run` preflight, and the prompt. `just ci`,
 `go test -race ./...`, and the real-Cake `test-cake` build pass without a model
 call.
 
+## Summarizer config isolation (done 2026-11-24)
+
+The summary child now gets a temporary `XDG_CONFIG_HOME` containing only a
+copy of the global `settings.toml`, in addition to its temporary working
+directory and data root. `--no-session` runs as an ephemeral session, which
+Cake does not treat as read-only, so it still attached the global hook runner;
+`--no-tools` also did not suppress extension startup, so MCP servers and
+toolbox tools loaded from the user config. Copying only `settings.toml` keeps
+model and profile resolution while suppressing `hooks.json`, `mcp.json`,
+`skills/`, and `tools/`. The legacy `~/.cake/AGENTS.md` is outside the XDG root
+and is still read if present.
+
+Tests cover the settings-only copy, a missing settings file, the `~/.config`
+fallback when `XDG_CONFIG_HOME` is unset, multi-key environment replacement,
+and an end-to-end fake child that asserts its config root, data root, and
+directory contents. `just ci` passes.
+
 ## Stage timing (done)
 
 `compact -json` and `inspect -json` now report `timings`: `load_ms`, `plan_ms`,
